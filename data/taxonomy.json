@@ -1,0 +1,160 @@
+{
+  "derivatives": [
+    "Soy Oil",
+    "Soy Protein",
+    "Soy Meal",
+    "Soy Lecithin",
+    "Soy Fiber",
+    "Soy Wax",
+    "Soy Hulls",
+    "Soybean Hulls",
+    "Soy-based Polyols",
+    "Soy Isoflavones",
+    "Soy Fatty Acids",
+    "Glycerol soy-derived",
+    "Soy-based Resins",
+    "Whole Soybean"
+  ],
+  "derivative_details": {
+    "Soy Oil": {
+      "subtypes": ["refined", "crude", "high oleic", "epoxidized"],
+      "description": "Primary industrial derivative of soybeans, used in coatings, lubricants, biodiesel, and plastics."
+    },
+    "Soy Protein": {
+      "subtypes": ["isolate", "concentrate", "hydrolyzed", "flour"],
+      "description": "Protein fractions used in adhesives, fibers, and bio-based materials."
+    },
+    "Soy Meal": {
+      "subtypes": ["defatted", "full-fat", "fermented"],
+      "description": "Byproduct of oil extraction, used in adhesives, animal feed supplements, and fermentation substrates."
+    },
+    "Soy Lecithin": {
+      "subtypes": ["deoiled", "fluid"],
+      "description": "Phospholipid mixture used as emulsifier, release agent, and in coatings."
+    },
+    "Soy Fiber": {
+      "subtypes": ["hulls", "dietary", "structural"],
+      "description": "Cellulosic and dietary fiber fractions used in composites and building materials."
+    },
+    "Soy Wax": {
+      "subtypes": ["hydrogenated", "blended"],
+      "description": "Hydrogenated soy oil used in candles, coatings, and packaging."
+    },
+    "Soy Hulls": {
+      "subtypes": ["raw", "processed"],
+      "description": "Outer coating of soybeans, used in composites and as fermentation feedstock."
+    },
+    "Soybean Hulls": {
+      "subtypes": ["lignocellulosic", "straw"],
+      "description": "Lignocellulosic biomass for bioenergy and bio-based materials."
+    },
+    "Soy-based Polyols": {
+      "subtypes": ["polyester polyol", "polyether polyol"],
+      "description": "Soy oil-derived polyols for polyurethane foams, coatings, and elastomers."
+    },
+    "Soy Isoflavones": {
+      "subtypes": ["genistein", "daidzein", "glycitein"],
+      "description": "Phytochemicals with potential industrial applications in nutraceuticals and biomaterials."
+    },
+    "Soy Fatty Acids": {
+      "subtypes": ["oleic", "linoleic", "linolenic", "palmitic", "stearic"],
+      "description": "Fatty acid fractions used in surfactants, lubricants, and chemical intermediates."
+    },
+    "Glycerol soy-derived": {
+      "subtypes": ["crude", "refined"],
+      "description": "Biodiesel byproduct used in chemicals, solvents, and pharmaceuticals."
+    },
+    "Soy-based Resins": {
+      "subtypes": ["alkyd", "epoxy", "polyester", "polyurethane"],
+      "description": "Bio-based resins for composites, coatings, and adhesives."
+    },
+    "Whole Soybean": {
+      "subtypes": ["fermented", "processed", "roasted"],
+      "description": "Whole bean applications in industrial fermentation and direct processing."
+    }
+  },
+  "sectors": [
+    "Construction & Building Materials",
+    "Automotive & Transportation",
+    "Packaging & Containers",
+    "Textiles & Fibers",
+    "Coatings, Paints & Inks",
+    "Adhesives & Sealants",
+    "Plastics & Bioplastics",
+    "Lubricants & Metalworking Fluids",
+    "Energy & Biofuels",
+    "Chemicals & Solvents",
+    "Personal Care & Cosmetics",
+    "Cleaning Products & Surfactants",
+    "Agriculture",
+    "Electronics",
+    "Firefighting Foam",
+    "Rubber & Elastomers"
+  ],
+  "sector_details": {
+    "Construction & Building Materials": {
+      "keywords": ["adhesive", "insulation", "composite", "concrete", "plywood", "particleboard", "OSB", "structural"],
+      "description": "Soy-based adhesives, insulation foams, and composite materials for construction."
+    },
+    "Automotive & Transportation": {
+      "keywords": ["lubricant", "tire", "foam", "composite", "seat cushion", "polyurethane", "engine oil"],
+      "description": "Soy in vehicle components including foams, lubricants, tires, and composites."
+    },
+    "Packaging & Containers": {
+      "keywords": ["film", "coating", "foam peanut", "biodegradable", "container", "wrap", "barrier"],
+      "description": "Soy-based packaging films, coatings, and biodegradable containers."
+    },
+    "Textiles & Fibers": {
+      "keywords": ["fiber", "fabric", "textile", "yarn", "nonwoven", "spinning"],
+      "description": "Soy protein fibers and textile applications."
+    },
+    "Coatings, Paints & Inks": {
+      "keywords": ["alkyd", "printing ink", "paint", "varnish", "coating", "pigment"],
+      "description": "Soy oil-based coatings, inks, and paint formulations."
+    },
+    "Adhesives & Sealants": {
+      "keywords": ["adhesive", "sealant", "glue", "binder", "bonding"],
+      "description": "Soy protein and oil-based adhesives and sealants."
+    },
+    "Plastics & Bioplastics": {
+      "keywords": ["PLA", "polyurethane", "bioplastic", "biodegradable", "polymer", "injection molding"],
+      "description": "Soy-based bioplastics and polymer blends."
+    },
+    "Lubricants & Metalworking Fluids": {
+      "keywords": ["lubricant", "hydraulic", "metalworking", "grease", "cutting fluid", "coolant"],
+      "description": "Soy oil-based industrial lubricants and metalworking fluids."
+    },
+    "Energy & Biofuels": {
+      "keywords": ["biodiesel", "bio-jet", "renewable diesel", "bioenergy", "transesterification", "FAME"],
+      "description": "Soy-based biodiesel, renewable fuels, and bioenergy."
+    },
+    "Chemicals & Solvents": {
+      "keywords": ["green chemistry", "solvent", "surfactant", "oleochemical", "intermediate"],
+      "description": "Soy-derived chemical intermediates and green solvents."
+    },
+    "Personal Care & Cosmetics": {
+      "keywords": ["moisturizer", "emollient", "cosmetic", "skin care", "hair care", "soap"],
+      "description": "Soy in personal care products and cosmetics."
+    },
+    "Cleaning Products & Surfactants": {
+      "keywords": ["detergent", "cleaner", "surfactant", "degreaser", "laundry"],
+      "description": "Soy-based cleaning products and industrial surfactants."
+    },
+    "Agriculture": {
+      "keywords": ["biopesticide", "seed coating", "adjuvant", "soil amendment", "crop protection"],
+      "description": "Soy-derived agricultural inputs and crop protection."
+    },
+    "Electronics": {
+      "keywords": ["circuit board", "dielectric", "electronic", "transformer oil", "PCB", "semiconductor"],
+      "description": "Soy in electronic components and dielectric fluids."
+    },
+    "Firefighting Foam": {
+      "keywords": ["PFAS", "AFFF", "firefighting", "fire suppression", "fluorine-free", "foam concentrate"],
+      "description": "Soy-based firefighting foams as PFAS replacements."
+    },
+    "Rubber & Elastomers": {
+      "keywords": ["rubber", "elastomer", "tire compound", "vulcanization", "bio-rubber", "natural rubber"],
+      "description": "Soy oil in rubber compounding and elastomer production."
+    }
+  }
+}

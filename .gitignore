@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables (secrets)
+.env
+
+# Database
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# Cache
+cache/
+
+# Generated outputs
+exports/
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# PyInstaller
+*.spec.bak
+
+# Checkoff data (imported locally)
+data/checkoff_projects.json
