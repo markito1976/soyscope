@@ -580,10 +580,11 @@ class Database:
             try:
                 cur = conn.execute(
                     """INSERT INTO checkoff_projects
-                       (year, title, category, keywords, lead_pi, institution, funding,
+                       (id, year, title, category, keywords, lead_pi, institution, funding,
                         summary, objectives, url)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
+                        project.id,
                         project.year,
                         project.title,
                         project.category,
@@ -600,16 +601,18 @@ class Database:
             except sqlite3.IntegrityError:
                 return None
 
-    def insert_checkoff_projects_batch(self, projects: list[CheckoffProject]) -> int:
+    def insert_checkoff_projects_batch(self, projects: list[CheckoffProject]) -> tuple[int, int]:
         """Insert multiple checkoff projects in a single transaction.
 
-        Returns the number of successfully inserted projects (skips duplicates).
+        Uses INSERT OR IGNORE with executemany for maximum throughput.
+        Returns (inserted, skipped) tuple.
         """
         if not projects:
-            return 0
+            return (0, 0)
 
         rows = [
             (
+                p.id,
                 p.year,
                 p.title,
                 p.category,
@@ -624,71 +627,75 @@ class Database:
             for p in projects
         ]
 
-        inserted = 0
         with self.connect() as conn:
-            for row in rows:
-                try:
-                    conn.execute(
-                        """INSERT INTO checkoff_projects
-                           (year, title, category, keywords, lead_pi, institution, funding,
-                            summary, objectives, url)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        row,
-                    )
-                    inserted += 1
-                except sqlite3.IntegrityError:
-                    pass  # skip duplicates
-        return inserted
+            before = conn.execute("SELECT COUNT(*) FROM checkoff_projects").fetchone()[0]
+            conn.executemany(
+                """INSERT OR IGNORE INTO checkoff_projects
+                   (id, year, title, category, keywords, lead_pi, institution, funding,
+                    summary, objectives, url)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                rows,
+            )
+            after = conn.execute("SELECT COUNT(*) FROM checkoff_projects").fetchone()[0]
+            inserted = after - before
+        skipped = len(projects) - inserted
+        return (inserted, skipped)
 
-    def insert_findings_batch(self, papers: list[Paper]) -> int:
+    def insert_findings_batch(self, papers: list[Paper]) -> tuple[int, int]:
         """Insert multiple findings in a single transaction.
 
-        Returns the number of successfully inserted findings (skips duplicates).
+        Uses executemany for the main insert, then handles finding_sources
+        tracking in a second pass. Checkoff papers typically have no DOIs,
+        so duplicates are rare; any DOI-based duplicates are silently skipped.
+
+        Returns (inserted, skipped) tuple.
         """
         if not papers:
-            return 0
+            return (0, 0)
 
-        inserted = 0
+        rows = [
+            (
+                paper.title,
+                paper.abstract,
+                paper.year,
+                paper.doi,
+                paper.url,
+                paper.pdf_url,
+                paper.authors_json,
+                paper.venue,
+                paper.source_api,
+                paper.source_type.value if hasattr(paper.source_type, "value") else paper.source_type,
+                paper.citation_count,
+                paper.open_access_status.value if paper.open_access_status and hasattr(paper.open_access_status, "value") else paper.open_access_status,
+                paper.raw_metadata_json,
+            )
+            for paper in papers
+        ]
+
         with self.connect() as conn:
-            for paper in papers:
-                try:
-                    cur = conn.execute(
-                        """INSERT INTO findings
-                           (title, abstract, year, doi, url, pdf_url, authors, venue,
-                            source_api, source_type, citation_count, open_access_status, raw_metadata)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            paper.title,
-                            paper.abstract,
-                            paper.year,
-                            paper.doi,
-                            paper.url,
-                            paper.pdf_url,
-                            paper.authors_json,
-                            paper.venue,
-                            paper.source_api,
-                            paper.source_type.value if hasattr(paper.source_type, "value") else paper.source_type,
-                            paper.citation_count,
-                            paper.open_access_status.value if paper.open_access_status and hasattr(paper.open_access_status, "value") else paper.open_access_status,
-                            paper.raw_metadata_json,
-                        ),
-                    )
-                    finding_id = cur.lastrowid
-                    if finding_id and paper.source_api:
-                        conn.execute(
-                            "INSERT OR IGNORE INTO finding_sources (finding_id, source_api) VALUES (?, ?)",
-                            (finding_id, paper.source_api),
-                        )
-                    inserted += 1
-                except sqlite3.IntegrityError:
-                    # Duplicate DOI - update instead
-                    if paper.doi:
-                        conn.execute(
-                            """UPDATE findings SET citation_count = ?, updated_at = CURRENT_TIMESTAMP
-                               WHERE doi = ?""",
-                            (paper.citation_count, paper.doi),
-                        )
-        return inserted
+            before = conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0]
+            conn.executemany(
+                """INSERT OR IGNORE INTO findings
+                   (title, abstract, year, doi, url, pdf_url, authors, venue,
+                    source_api, source_type, citation_count, open_access_status, raw_metadata)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                rows,
+            )
+            after = conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0]
+            inserted = after - before
+
+            # Batch-insert finding_sources for all newly-inserted findings
+            source_apis = {p.source_api for p in papers if p.source_api}
+            for source_api in source_apis:
+                conn.execute(
+                    """INSERT OR IGNORE INTO finding_sources (finding_id, source_api)
+                       SELECT id, source_api FROM findings
+                       WHERE source_api = ? AND id > ?""",
+                    (source_api, before),
+                )
+
+        skipped = len(papers) - inserted
+        return (inserted, skipped)
 
     def get_checkoff_count(self) -> int:
         with self.connect() as conn:

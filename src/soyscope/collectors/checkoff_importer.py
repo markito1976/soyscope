@@ -68,6 +68,8 @@ class CheckoffImporter:
             return 0
 
         imported = 0
+        skipped = 0
+        findings_imported = 0
         parse_errors = 0
         with Progress(
             SpinnerColumn(),
@@ -97,18 +99,26 @@ class CheckoffImporter:
                         parse_errors += 1
 
                 # Batch insert checkoff projects (single transaction)
-                chunk_imported = self.db.insert_checkoff_projects_batch(parsed_projects)
-                imported += chunk_imported
+                chunk_ins, chunk_skip = self.db.insert_checkoff_projects_batch(parsed_projects)
+                imported += chunk_ins
+                skipped += chunk_skip
 
                 # Batch insert findings (single transaction)
                 if parsed_papers:
-                    self.db.insert_findings_batch(parsed_papers)
+                    f_ins, f_skip = self.db.insert_findings_batch(parsed_papers)
+                    findings_imported += f_ins
 
                 progress.update(task, advance=len(chunk))
 
+        # Print summary
+        console.print()
+        console.print("  [bold]Import Summary:[/bold]")
+        console.print(f"    Records in file:   {len(projects):,}")
+        console.print(f"    Projects imported: {imported:,}")
+        console.print(f"    Projects skipped:  {skipped:,} (duplicates)")
+        console.print(f"    Findings created:  {findings_imported:,}")
         if parse_errors:
-            console.print(f"  [yellow]{parse_errors} records failed to parse[/yellow]")
-        console.print(f"  Imported [bold]{imported}[/bold] of {len(projects)} projects")
+            console.print(f"    [yellow]Parse errors:    {parse_errors}[/yellow]")
         return imported
 
     def import_all(self) -> dict[str, Any]:
@@ -147,6 +157,7 @@ class CheckoffImporter:
                    or item.get("summary") or item.get("description") or item.get("abstract", ""))
 
         return CheckoffProject(
+            id=item.get("id"),
             year=str(item.get("year", "")),
             title=item.get("title") or item.get("project_title", ""),
             category=item.get("category") or item.get("research_area", ""),

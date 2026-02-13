@@ -1,4 +1,9 @@
-"""Systematic query generation (derivative x sector x year)."""
+"""Systematic query generation (derivative x sector x year).
+
+Supports synonym expansion, semantic/conceptual queries for implicit
+industrial relevance, and Tier 1 source routing (patents -> patentsview/lens,
+government -> osti/sbir/usda_ers, academic -> agris/lens alongside originals).
+"""
 
 from __future__ import annotations
 
@@ -10,7 +15,33 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Soy synonym expansion
+# ---------------------------------------------------------------------------
+
+SOY_SYNONYMS: list[str] = ["soy", "soybean", "soy bean", "soya", "soja"]
+"""Every search that mentions soy should automatically produce variants
+using each of these synonyms so we catch all spellings worldwide."""
+
+
+def expand_soy_synonyms(template: str) -> list[str]:
+    """Expand a query template containing ``{soy}`` into N queries.
+
+    The placeholder ``{soy}`` in *template* is replaced with each entry
+    in :data:`SOY_SYNONYMS`.
+
+    If the template does not contain the placeholder, it is returned
+    unchanged (as a single-element list).
+    """
+    if "{soy}" not in template:
+        return [template]
+    return [template.replace("{soy}", syn) for syn in SOY_SYNONYMS]
+
+
+# ---------------------------------------------------------------------------
 # Default seed taxonomy
+# ---------------------------------------------------------------------------
+
 DEFAULT_DERIVATIVES = [
     "Soy Oil",
     "Soy Protein",
@@ -69,6 +100,74 @@ SECTOR_KEYWORDS: dict[str, list[str]] = {
 
 TIME_WINDOWS = [(2000, 2004), (2005, 2009), (2010, 2014), (2015, 2019), (2020, 2026)]
 
+# ---------------------------------------------------------------------------
+# Semantic / conceptual queries for *implicit* industrial relevance
+# ---------------------------------------------------------------------------
+
+SEMANTIC_QUERIES: list[str] = [
+    # Foams & polyols
+    "polyurethane foam plant-derived polyol",
+    "vegetable oil polyol rigid foam insulation",
+    "bio-polyol synthesis from triglyceride epoxidation",
+    # Adhesives
+    "bio-based adhesive oilseed protein wood composite",
+    "protein-based wood adhesive formaldehyde replacement",
+    # Fuels
+    "biodiesel feedstock oil extraction transesterification",
+    "renewable diesel hydrotreating vegetable oil",
+    # Composites
+    "natural fiber reinforced composite mechanical properties",
+    "plant fiber thermoplastic composite injection molding",
+    # Protein & functional materials
+    "plant protein isolate functional properties film formation",
+    "oilseed protein hydrogel biomedical scaffold",
+    # Coatings & resins
+    "vegetable oil epoxidation coating corrosion protection",
+    "alkyd resin renewable drying oil formulation",
+    "bio-based epoxy curing agent amine fatty acid",
+    # Lubricants
+    "bio-lubricant renewable base stock oxidative stability",
+    "vegetable oil hydraulic fluid tribological performance",
+    # Plastics & bioplastics
+    "thermoplastic starch protein blend biodegradable packaging",
+    "polylactic acid oilseed plasticizer flexibility",
+    # Surfactants & chemicals
+    "fatty acid methyl ester green solvent cleaning",
+    "lecithin phospholipid emulsifier industrial application",
+    # Rubber
+    "bio-based rubber processing oil silica reinforcement",
+    "epoxidized vegetable oil plasticizer PVC replacement",
+    # Emerging / novel
+    "nanocellulose oilseed residue composite barrier film",
+    "carbon dot synthesis from agricultural waste biomass",
+    "fermentation platform chemical succinic acid oilseed meal",
+]
+"""Queries designed to discover papers about soy applications that never
+mention soy or soybean explicitly -- they target the technology
+and chemistry rather than the crop name."""
+
+# ---------------------------------------------------------------------------
+# Target API routing helpers
+# ---------------------------------------------------------------------------
+
+# Core academic sources (original 8 minus Unpaywall which is a resolver)
+_ACADEMIC_APIS = ["openalex", "semantic_scholar", "pubmed", "crossref"]
+_ACADEMIC_APIS_TIER1 = ["openalex", "semantic_scholar", "pubmed", "crossref", "agris"]
+_ACADEMIC_APIS_WITH_LENS = ["openalex", "semantic_scholar", "pubmed", "crossref", "agris", "lens"]
+
+_SEMANTIC_APIS = ["exa"]
+
+_WEB_APIS = ["tavily"]
+
+_PATENT_APIS = ["patentsview", "lens"]
+_PATENT_APIS_FALLBACK = ["exa", "tavily"]  # when dedicated patent APIs unavailable
+
+_GOVT_REPORT_APIS = ["osti", "sbir", "usda_ers"]
+
+
+# ---------------------------------------------------------------------------
+# Query plan data structure
+# ---------------------------------------------------------------------------
 
 @dataclass
 class QueryPlan:
@@ -78,9 +177,13 @@ class QueryPlan:
     sector: str | None = None
     year_start: int | None = None
     year_end: int | None = None
-    query_type: str = "academic"  # academic, semantic, web, patent
+    query_type: str = "academic"  # academic, semantic, web, patent, govt, implicit_semantic
     target_apis: list[str] = field(default_factory=list)
 
+
+# ---------------------------------------------------------------------------
+# Taxonomy loader
+# ---------------------------------------------------------------------------
 
 def load_taxonomy(taxonomy_path: Path | None = None) -> tuple[list[str], list[str]]:
     """Load derivatives and sectors from taxonomy.json or use defaults."""
@@ -91,45 +194,97 @@ def load_taxonomy(taxonomy_path: Path | None = None) -> tuple[list[str], list[st
     return DEFAULT_DERIVATIVES, DEFAULT_SECTORS
 
 
+# ---------------------------------------------------------------------------
+# Query generators (per type)
+# ---------------------------------------------------------------------------
+
 def generate_academic_queries(derivative: str, sector: str) -> list[str]:
-    """Generate academic search queries for a derivative-sector pair."""
-    queries = [
-        f'"{derivative}" AND "{sector}"',
-        f'"soy-based" AND "{sector}"',
-        f'"soybean" AND "{sector.split(" & ")[0].split(",")[0].lower()}"',
-    ]
-    # Add keyword-specific queries
+    """Generate academic search queries for a derivative-sector pair.
+
+    Uses synonym expansion so each base template produces one query per
+    synonym in :data:`SOY_SYNONYMS`.
+    """
+    sector_short = sector.split(" & ")[0].split(",")[0].lower()
     keywords = SECTOR_KEYWORDS.get(sector, [])
+
+    # Base templates using {soy} placeholder for expansion
+    templates: list[str] = [
+        f'"{{soy}}-based" AND "{sector}"',
+        f'"{{soy}}" AND "{sector_short}"',
+    ]
+    # Derivative-specific query (already contains the soy word via derivative name)
+    direct_queries: list[str] = [
+        f'"{derivative}" AND "{sector}"',
+    ]
     if keywords:
-        queries.append(f'"{derivative}" AND ("{keywords[0]}" OR "{keywords[1] if len(keywords) > 1 else keywords[0]}")')
-    return queries
+        kw_part = f'"{keywords[0]}" OR "{keywords[1] if len(keywords) > 1 else keywords[0]}"'
+        direct_queries.append(f'"{derivative}" AND ({kw_part})')
+
+    # Expand synonym templates
+    expanded: list[str] = []
+    for tmpl in templates:
+        expanded.extend(expand_soy_synonyms(tmpl))
+
+    return direct_queries + expanded
 
 
 def generate_semantic_queries(derivative: str, sector: str) -> list[str]:
     """Generate EXA-style semantic/conceptual queries."""
     sector_short = sector.split(" & ")[0].split(",")[0]
-    return [
-        f"soybean {derivative.lower()} used as alternative in {sector_short.lower()}",
-        f"bio-based {sector_short.lower()} product from soy replacing petroleum",
+    templates = [
+        f"{{soy}} {derivative.lower()} used as alternative in {sector_short.lower()}",
+        f"bio-based {sector_short.lower()} product from {{soy}} replacing petroleum",
     ]
+    expanded: list[str] = []
+    for tmpl in templates:
+        for syn in SOY_SYNONYMS[:2]:
+            expanded.append(tmpl.replace("{soy}", syn))
+    return expanded
 
 
 def generate_web_queries(derivative: str, sector: str) -> list[str]:
     """Generate web/industry search queries for Tavily."""
     sector_short = sector.split(" & ")[0].split(",")[0]
-    return [
-        f"soy-based {sector_short.lower()} product commercial market",
-        f"soybean {derivative.lower()} industrial application report",
+    templates = [
+        f"{{soy}}-based {sector_short.lower()} product commercial market",
+        f"{{soy}} {derivative.lower()} industrial application report",
     ]
+    expanded: list[str] = []
+    for tmpl in templates:
+        for syn in SOY_SYNONYMS[:2]:
+            expanded.append(tmpl.replace("{soy}", syn))
+    return expanded
 
 
 def generate_patent_queries(derivative: str, sector: str) -> list[str]:
-    """Generate patent-focused queries."""
+    """Generate patent-focused queries for PatentsView and Lens."""
     sector_short = sector.split(" & ")[0].split(",")[0]
-    return [
-        f'patent soybean {derivative.lower()} {sector_short.lower()}',
+    templates = [
+        f"{{soy}} {derivative.lower()} {sector_short.lower()}",
     ]
+    expanded: list[str] = []
+    for tmpl in templates:
+        expanded.extend(expand_soy_synonyms(tmpl))
+    return expanded
 
+
+def generate_govt_queries(derivative: str, sector: str) -> list[str]:
+    """Generate government report / grant queries for OSTI, SBIR, USDA ERS."""
+    sector_short = sector.split(" & ")[0].split(",")[0]
+    templates = [
+        f"{{soy}} {derivative.lower()} {sector_short.lower()} research",
+        f"{{soy}} {sector_short.lower()} biobased",
+    ]
+    expanded: list[str] = []
+    for tmpl in templates:
+        for syn in SOY_SYNONYMS[:2]:
+            expanded.append(tmpl.replace("{soy}", syn))
+    return expanded
+
+
+# ---------------------------------------------------------------------------
+# Full plan builders
+# ---------------------------------------------------------------------------
 
 def generate_full_query_plan(
     taxonomy_path: Path | None = None,
@@ -137,7 +292,8 @@ def generate_full_query_plan(
 ) -> list[QueryPlan]:
     """Generate the complete query plan for historical build.
 
-    Returns ~4,400 queries across all derivative x sector x time window combinations.
+    Produces queries across all derivative x sector x time-window
+    combinations, with synonym expansion and Tier 1 source routing.
     """
     derivatives, sectors = load_taxonomy(taxonomy_path)
     windows = time_windows or TIME_WINDOWS
@@ -146,7 +302,7 @@ def generate_full_query_plan(
     for derivative in derivatives:
         for sector in sectors:
             for year_start, year_end in windows:
-                # Academic queries (OpenAlex, Semantic Scholar, PubMed, Crossref)
+                # Academic queries (original + AGRIS)
                 for q in generate_academic_queries(derivative, sector):
                     plans.append(QueryPlan(
                         query=q,
@@ -155,7 +311,19 @@ def generate_full_query_plan(
                         year_start=year_start,
                         year_end=year_end,
                         query_type="academic",
-                        target_apis=["openalex", "semantic_scholar", "pubmed", "crossref"],
+                        target_apis=_ACADEMIC_APIS_TIER1[:],
+                    ))
+
+                # Government report queries (OSTI, SBIR, USDA ERS)
+                for q in generate_govt_queries(derivative, sector):
+                    plans.append(QueryPlan(
+                        query=q,
+                        derivative=derivative,
+                        sector=sector,
+                        year_start=year_start,
+                        year_end=year_end,
+                        query_type="govt",
+                        target_apis=_GOVT_REPORT_APIS[:],
                     ))
 
             # Semantic queries (EXA) - one per combo, no time split needed
@@ -165,7 +333,7 @@ def generate_full_query_plan(
                     derivative=derivative,
                     sector=sector,
                     query_type="semantic",
-                    target_apis=["exa"],
+                    target_apis=_SEMANTIC_APIS[:],
                 ))
 
             # Web queries (Tavily) - one per combo
@@ -175,20 +343,34 @@ def generate_full_query_plan(
                     derivative=derivative,
                     sector=sector,
                     query_type="web",
-                    target_apis=["tavily"],
+                    target_apis=_WEB_APIS[:],
                 ))
 
-            # Patent queries (EXA + Tavily) - one per combo
+            # Patent queries (PatentsView + Lens) - one per combo
             for q in generate_patent_queries(derivative, sector):
                 plans.append(QueryPlan(
                     query=q,
                     derivative=derivative,
                     sector=sector,
                     query_type="patent",
-                    target_apis=["exa", "tavily"],
+                    target_apis=_PATENT_APIS[:],
                 ))
 
-    logger.info(f"Generated {len(plans)} queries for {len(derivatives)} derivatives x {len(sectors)} sectors")
+    # -- Implicit semantic queries (cross-cutting, no derivative/sector) --
+    for q in SEMANTIC_QUERIES:
+        plans.append(QueryPlan(
+            query=q,
+            derivative=None,
+            sector=None,
+            query_type="implicit_semantic",
+            target_apis=["exa", "openalex", "semantic_scholar"],
+        ))
+
+    logger.info(
+        f"Generated {len(plans)} queries for "
+        f"{len(derivatives)} derivatives x {len(sectors)} sectors "
+        f"(+{len(SEMANTIC_QUERIES)} implicit semantic queries)"
+    )
     return plans
 
 
@@ -196,14 +378,19 @@ def generate_refresh_queries(
     since_year: int,
     taxonomy_path: Path | None = None,
 ) -> list[QueryPlan]:
-    """Generate queries for incremental refresh since a given year."""
+    """Generate queries for incremental refresh since a given year.
+
+    Uses a lighter query set than the full build (fewer synonym variants)
+    but still routes to Tier 1 sources.
+    """
     derivatives, sectors = load_taxonomy(taxonomy_path)
     plans: list[QueryPlan] = []
     current_year = 2026
 
     for derivative in derivatives:
         for sector in sectors:
-            for q in generate_academic_queries(derivative, sector)[:2]:
+            # Academic -- first 4 queries only to keep refresh light
+            for q in generate_academic_queries(derivative, sector)[:4]:
                 plans.append(QueryPlan(
                     query=q,
                     derivative=derivative,
@@ -211,10 +398,11 @@ def generate_refresh_queries(
                     year_start=since_year,
                     year_end=current_year,
                     query_type="academic",
-                    target_apis=["openalex", "semantic_scholar"],
+                    target_apis=_ACADEMIC_APIS_TIER1[:],
                 ))
 
-            for q in generate_web_queries(derivative, sector)[:1]:
+            # Web -- first 2
+            for q in generate_web_queries(derivative, sector)[:2]:
                 plans.append(QueryPlan(
                     query=q,
                     derivative=derivative,
@@ -222,8 +410,44 @@ def generate_refresh_queries(
                     year_start=since_year,
                     year_end=current_year,
                     query_type="web",
-                    target_apis=["tavily"],
+                    target_apis=_WEB_APIS[:],
                 ))
+
+            # Patent -- first 2
+            for q in generate_patent_queries(derivative, sector)[:2]:
+                plans.append(QueryPlan(
+                    query=q,
+                    derivative=derivative,
+                    sector=sector,
+                    year_start=since_year,
+                    year_end=current_year,
+                    query_type="patent",
+                    target_apis=_PATENT_APIS[:],
+                ))
+
+            # Government -- first 2
+            for q in generate_govt_queries(derivative, sector)[:2]:
+                plans.append(QueryPlan(
+                    query=q,
+                    derivative=derivative,
+                    sector=sector,
+                    year_start=since_year,
+                    year_end=current_year,
+                    query_type="govt",
+                    target_apis=_GOVT_REPORT_APIS[:],
+                ))
+
+    # Implicit semantic queries (always included in refresh)
+    for q in SEMANTIC_QUERIES:
+        plans.append(QueryPlan(
+            query=q,
+            derivative=None,
+            sector=None,
+            year_start=since_year,
+            year_end=current_year,
+            query_type="implicit_semantic",
+            target_apis=["exa", "openalex", "semantic_scholar"],
+        ))
 
     logger.info(f"Generated {len(plans)} refresh queries since {since_year}")
     return plans

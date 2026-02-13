@@ -85,7 +85,7 @@ class CheckoffImportWorker(BaseWorker):
                     logger.warning("Failed to parse checkoff project: %s", exc)
                     parse_errors += 1
 
-            chunk_imported = db.insert_checkoff_projects_batch(parsed_projects)
+            chunk_imported, chunk_skipped = db.insert_checkoff_projects_batch(parsed_projects)
             imported += chunk_imported
 
             if parsed_papers:

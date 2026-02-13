@@ -94,8 +94,8 @@ class TestFindingSources:
                   source_api="crossref", source_type=SourceType.PAPER)
             for i in range(3)
         ]
-        count = db.insert_findings_batch(papers)
-        assert count == 3
+        inserted, skipped = db.insert_findings_batch(papers)
+        assert inserted == 3
 
         smap = db.get_all_finding_sources_map()
         assert len(smap) == 3
