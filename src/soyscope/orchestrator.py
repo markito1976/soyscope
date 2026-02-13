@@ -139,28 +139,75 @@ class SearchOrchestrator:
     ) -> tuple[int, int]:
         """Search, deduplicate, and store results in the database.
 
+        Records all API sources that discover a paper (multi-source tracking).
         Returns (new_count, updated_count).
         """
-        papers = await self.search(query, max_results, year_start, year_end, source_names)
+        targets = source_names or list(self.sources.keys())
+        tasks = []
+
+        for name in targets:
+            if name not in self.sources:
+                logger.warning(f"Source '{name}' not registered, skipping")
+                continue
+            if not self.breakers.is_available(name):
+                logger.warning(f"Circuit breaker open for '{name}', skipping")
+                continue
+            tasks.append(self._search_one(name, query, max_results, year_start, year_end, True))
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Collect all papers with source info preserved
+        all_papers: list[Paper] = []
+        active_targets = [n for n in targets if n in self.sources and self.breakers.is_available(n)]
+        for name, result in zip(active_targets, results):
+            if isinstance(result, Exception):
+                logger.error(f"Search failed for {name}: {result}")
+                self.breakers.get(name).record_failure()
+                continue
+            if result.papers:
+                all_papers.extend(result.papers)
+                self.breakers.get(name).record_success()
+                logger.info(f"{name}: {len(result.papers)} results for '{query}'")
+
+        if not all_papers:
+            return 0, 0
+
+        # Merge with RRF
+        merged = reciprocal_rank_fusion([all_papers])
+
+        # Load dedup state with DOI-to-ID mapping for source tracking
+        existing_dois = self.db.get_existing_dois()
+        existing_titles = self.db.get_existing_titles()
+        doi_to_id = self.db.get_doi_to_id_map()
+
+        dedup = Deduplicator()
+        dedup.load_existing(existing_dois, existing_titles, doi_to_id=doi_to_id)
 
         new_count = 0
         updated_count = 0
 
-        for paper in papers:
-            result_id = self.db.insert_finding(paper)
-            if result_id is not None:
-                new_count += 1
-            else:
+        for paper in merged:
+            is_dup, existing_id = dedup.is_duplicate(paper)
+
+            if is_dup:
+                if existing_id and paper.source_api:
+                    self.db.add_finding_source(existing_id, paper.source_api)
                 updated_count += 1
+            else:
+                result_id = self.db.insert_finding(paper)
+                if result_id is not None:
+                    new_count += 1
+                    dedup.register(paper, result_id)
+                else:
+                    updated_count += 1
 
         # Log query
         if run_id is not None:
-            total_results = new_count + updated_count
             self.db.log_search_query(
                 run_id=run_id,
                 query_text=query,
-                api_source=",".join(source_names or list(self.sources.keys())),
-                results_returned=len(papers),
+                api_source=",".join(targets),
+                results_returned=len(merged),
                 new_findings=new_count,
             )
 

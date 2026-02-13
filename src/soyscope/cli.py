@@ -88,6 +88,31 @@ def _build_sources():
         from .sources.unpaywall_source import UnpaywallSource
         sources.append(UnpaywallSource(email=api_cfg["unpaywall"].email))
 
+    # --- Tier 1 sources ---
+    if api_cfg["osti"].enabled:
+        from .sources.osti_source import OSTISource
+        sources.append(OSTISource())
+
+    if api_cfg["patentsview"].enabled:
+        from .sources.patentsview_source import PatentsViewSource
+        sources.append(PatentsViewSource(api_key=api_cfg["patentsview"].api_key))
+
+    if api_cfg["sbir"].enabled:
+        from .sources.sbir_source import SBIRSource
+        sources.append(SBIRSource())
+
+    if api_cfg["agris"].enabled:
+        from .sources.agris_source import AGRISSource
+        sources.append(AGRISSource())
+
+    if api_cfg["lens"].enabled and api_cfg["lens"].api_key:
+        from .sources.lens_source import LensSource
+        sources.append(LensSource(api_key=api_cfg["lens"].api_key))
+
+    if api_cfg["usda_ers"].enabled:
+        from .sources.usda_ers_source import USDAERSSource
+        sources.append(USDAERSSource(api_key=api_cfg["usda_ers"].api_key))
+
     return sources
 
 
@@ -128,6 +153,7 @@ def build(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
     concurrency: int = typer.Option(3, "--concurrency", "-c", help="Concurrent API queries"),
     max_queries: Optional[int] = typer.Option(None, "--max-queries", "-m", help="Limit queries (for testing)"),
+    resume: bool = typer.Option(False, "--resume", "-r", help="Resume last interrupted build"),
 ):
     """Run the initial 25-year historical database build."""
     _setup_logging(verbose)
@@ -137,7 +163,7 @@ def build(
 
     from .collectors.historical_builder import HistoricalBuilder
     builder = HistoricalBuilder(orchestrator=orchestrator, db=db)
-    result = asyncio.run(builder.build(concurrency=concurrency, max_queries=max_queries))
+    result = asyncio.run(builder.build(concurrency=concurrency, max_queries=max_queries, resume=resume))
     console.print(f"\nBuild summary: {result}")
 
 
@@ -218,6 +244,79 @@ def import_checkoff(
         console.print(f"Import result: {result}")
 
 
+@app.command(name="import-deliverables")
+def import_deliverables(
+    path: str = typer.Option(..., "--path", "-p", help="Path to USB deliverables CSV file"),
+    no_resolve_oa: bool = typer.Option(False, "--no-resolve-oa", help="Skip Unpaywall OA resolution"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """Import USB-funded research deliverables from CSV."""
+    _setup_logging(verbose)
+    db = _get_db()
+    settings = get_settings()
+
+    unpaywall_email = settings.apis["unpaywall"].email if not no_resolve_oa else None
+
+    from .collectors.usb_deliverables_importer import USBDeliverablesImporter
+    importer = USBDeliverablesImporter(db=db, unpaywall_email=unpaywall_email)
+    result = asyncio.run(importer.import_from_csv(Path(path), resolve_oa=not no_resolve_oa))
+    console.print(f"\nImport summary: {result}")
+
+
+@app.command(name="resolve-oa")
+def resolve_oa(
+    limit: int = typer.Option(0, "--limit", "-l", help="Max DOIs to resolve (0 = all)"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """Resolve Open Access links via Unpaywall for findings with DOIs."""
+    _setup_logging(verbose)
+    db = _get_db()
+    settings = get_settings()
+
+    email = settings.apis["unpaywall"].email if settings.apis["unpaywall"].enabled else None
+    if not email:
+        console.print("[red]No UNPAYWALL_EMAIL configured in .env[/red]")
+        raise typer.Exit(1)
+
+    from .collectors.oa_resolver import OAResolver
+
+    resolver = OAResolver(db=db, email=email)
+    pairs = resolver.get_unresolved_dois(limit=limit)
+    console.print(f"Found [bold]{len(pairs)}[/bold] findings with unresolved DOIs")
+
+    if not pairs:
+        console.print("[green]Nothing to resolve.[/green]")
+        return
+
+    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
+
+    with Progress(
+        SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
+        BarColumn(), TextColumn("({task.completed}/{task.total})"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Resolving OA", total=len(pairs))
+
+        def _progress_cb(current: int, total: int, msg: str) -> None:
+            progress.update(task, completed=current, description=msg)
+
+        resolver.progress_callback = _progress_cb
+        count = asyncio.run(resolver.resolve_all(limit=limit))
+
+    console.print(f"[green]Resolved {count}/{len(pairs)} DOIs[/green]")
+
+
+@app.command(name="backfill-sources")
+def backfill_sources(
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """Seed finding_sources from existing findings.source_api column."""
+    _setup_logging(verbose)
+    db = _get_db()
+    count = db.backfill_finding_sources()
+    console.print(f"[green]Backfilled {count} finding-source records.[/green]")
+
+
 @app.command()
 def stats(
     verbose: bool = typer.Option(False, "--verbose", "-v"),
@@ -240,6 +339,7 @@ def stats(
     table.add_row("  Tier 3 (Deep)", f"{s['enrichment_deep']:,}")
     table.add_row("Total Tags", str(s["total_tags"]))
     table.add_row("Checkoff Projects", f"{s['total_checkoff']:,}")
+    table.add_row("USB Deliverables", f"{s['total_usb_deliverables']:,}")
     table.add_row("Search Runs", str(s["total_runs"]))
 
     console.print(table)
@@ -259,6 +359,13 @@ def stats(
         for stype, count in sorted(s["by_type"].items(), key=lambda x: x[1], reverse=True):
             type_table.add_row(stype, f"{count:,}")
         console.print(type_table)
+
+    if s.get("findings_with_multiple_sources", 0) > 0:
+        console.print(
+            f"\nMulti-source: {s['findings_with_multiple_sources']} findings "
+            f"discovered by multiple APIs "
+            f"(avg {s['avg_sources_per_finding']:.1f} sources/finding)"
+        )
 
 
 @export_app.command(name="excel")
@@ -342,6 +449,13 @@ def search(
             console.print(f"\nTotal: {len(papers)} results")
 
     asyncio.run(_search())
+
+
+@app.command()
+def gui():
+    """Launch the SoyScope PySide6 desktop GUI."""
+    from .gui.main_window import launch_gui
+    raise SystemExit(launch_gui())
 
 
 @app.command(name="init")

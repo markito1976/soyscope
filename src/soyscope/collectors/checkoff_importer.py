@@ -41,10 +41,11 @@ class CheckoffImporter:
         # Deduplicate
         return list({p.resolve() for p in found})
 
-    def import_from_json(self, json_path: Path) -> int:
+    def import_from_json(self, json_path: Path, batch_size: int = 500) -> int:
         """Import projects from a JSON file.
 
         Supports both array-of-objects and single-object formats.
+        Uses batch inserts for performance (single DB transaction per chunk).
         Returns number of projects imported.
         """
         console.print(f"Importing from [bold]{json_path}[/bold]...")
@@ -67,6 +68,7 @@ class CheckoffImporter:
             return 0
 
         imported = 0
+        parse_errors = 0
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -76,18 +78,36 @@ class CheckoffImporter:
         ) as progress:
             task = progress.add_task("Importing checkoff projects", total=len(projects))
 
-            for item in projects:
-                try:
-                    project = self._parse_project(item)
-                    result = self.db.insert_checkoff_project(project)
-                    if result is not None:
-                        imported += 1
-                        # Also create a Finding entry for cross-referencing
-                        self._create_finding_from_project(project)
-                except Exception as e:
-                    logger.warning(f"Failed to import project: {e}")
-                progress.update(task, advance=1)
+            # Process in chunks for batch DB inserts with progress updates
+            for chunk_start in range(0, len(projects), batch_size):
+                chunk = projects[chunk_start : chunk_start + batch_size]
 
+                # Parse all items in this chunk
+                parsed_projects: list = []
+                parsed_papers: list = []
+                for item in chunk:
+                    try:
+                        project = self._parse_project(item)
+                        parsed_projects.append(project)
+                        paper = self._paper_from_project(project)
+                        if paper is not None:
+                            parsed_papers.append(paper)
+                    except Exception as e:
+                        logger.warning(f"Failed to parse project: {e}")
+                        parse_errors += 1
+
+                # Batch insert checkoff projects (single transaction)
+                chunk_imported = self.db.insert_checkoff_projects_batch(parsed_projects)
+                imported += chunk_imported
+
+                # Batch insert findings (single transaction)
+                if parsed_papers:
+                    self.db.insert_findings_batch(parsed_papers)
+
+                progress.update(task, advance=len(chunk))
+
+        if parse_errors:
+            console.print(f"  [yellow]{parse_errors} records failed to parse[/yellow]")
         console.print(f"  Imported [bold]{imported}[/bold] of {len(projects)} projects")
         return imported
 
@@ -140,12 +160,12 @@ class CheckoffImporter:
             url=item.get("url") or item.get("link", ""),
         )
 
-    def _create_finding_from_project(self, project: CheckoffProject) -> None:
-        """Create a Finding entry from a checkoff project for unified search."""
+    def _paper_from_project(self, project: CheckoffProject) -> Paper | None:
+        """Build a Paper from a checkoff project for unified search (no DB call)."""
         if not project.title:
-            return
+            return None
 
-        paper = Paper(
+        return Paper(
             title=project.title,
             abstract=project.summary or project.objectives,
             year=int(project.year) if project.year and project.year.isdigit() else None,
@@ -155,4 +175,9 @@ class CheckoffImporter:
             source_api="checkoff",
             source_type=SourceType.REPORT,
         )
-        self.db.insert_finding(paper)
+
+    def _create_finding_from_project(self, project: CheckoffProject) -> None:
+        """Create a Finding entry from a checkoff project for unified search."""
+        paper = self._paper_from_project(project)
+        if paper is not None:
+            self.db.insert_finding(paper)

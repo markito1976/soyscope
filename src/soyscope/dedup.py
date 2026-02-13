@@ -43,12 +43,19 @@ class Deduplicator:
     def __init__(self, title_threshold: float = 90.0) -> None:
         self.title_threshold = title_threshold
         self._seen_dois: set[str] = set()
+        self._doi_to_id: dict[str, int | None] = {}
         self._seen_titles: list[tuple[int | None, str]] = []
 
-    def load_existing(self, dois: set[str], titles: list[tuple[int, str]]) -> None:
+    def load_existing(self, dois: set[str], titles: list[tuple[int, str]],
+                      doi_to_id: dict[str, int] | None = None) -> None:
         """Load existing DOIs and titles from the database."""
         self._seen_dois = {normalize_doi(d) for d in dois if d} - {None}
         self._seen_titles = [(tid, normalize_title(t)) for tid, t in titles if t]
+        if doi_to_id:
+            for doi, fid in doi_to_id.items():
+                nd = normalize_doi(doi)
+                if nd:
+                    self._doi_to_id[nd] = fid
 
     def is_duplicate(self, paper: Paper) -> tuple[bool, int | None]:
         """Check if a paper is a duplicate.
@@ -59,7 +66,7 @@ class Deduplicator:
         # 1. DOI match (exact)
         ndoi = normalize_doi(paper.doi)
         if ndoi and ndoi in self._seen_dois:
-            return True, None
+            return True, self._doi_to_id.get(ndoi)
 
         # 2. Fuzzy title match
         if paper.title:
@@ -75,6 +82,7 @@ class Deduplicator:
         ndoi = normalize_doi(paper.doi)
         if ndoi:
             self._seen_dois.add(ndoi)
+            self._doi_to_id[ndoi] = db_id
         if paper.title:
             self._seen_titles.append((db_id, normalize_title(paper.title)))
 

@@ -86,4 +86,11 @@ def setup_rate_limiters() -> RateLimiterRegistry:
     rate_limiters.register("core", rate=5.0, burst=5)
     rate_limiters.register("unpaywall", rate=10.0, burst=10)
     rate_limiters.register("claude", rate=5.0, burst=5)
+    # Tier 1 sources
+    rate_limiters.register("osti", rate=1.0, burst=2)
+    rate_limiters.register("patentsview", rate=0.75, burst=2)  # 45/min
+    rate_limiters.register("sbir", rate=1.0, burst=2)
+    rate_limiters.register("agris", rate=1.0, burst=2)
+    rate_limiters.register("lens", rate=0.83, burst=2)  # 50/min
+    rate_limiters.register("usda_ers", rate=1.0, burst=2)
     return rate_limiters

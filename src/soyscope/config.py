@@ -120,6 +120,46 @@ class Settings:
                 rate_limit_qps=5.0,
                 enabled=bool(os.getenv("ANTHROPIC_API_KEY")),
             ),
+            # --- Tier 1 sources (free, no/light auth) ---
+            "osti": APIConfig(
+                name="osti",
+                base_url="https://www.osti.gov/api/v1/records",
+                rate_limit_qps=1.0,
+                enabled=True,  # Free, no auth
+            ),
+            "patentsview": APIConfig(
+                name="patentsview",
+                api_key=os.getenv("PATENTSVIEW_API_KEY"),
+                base_url="https://search.patentsview.org/api/v1/patent/",
+                rate_limit_qps=0.75,  # 45/min
+                enabled=True,  # Works without key too
+            ),
+            "sbir": APIConfig(
+                name="sbir",
+                base_url="https://api.www.sbir.gov/public/api/awards",
+                rate_limit_qps=1.0,
+                enabled=True,  # Free, no auth
+            ),
+            "agris": APIConfig(
+                name="agris",
+                base_url="https://agris.fao.org/search",
+                rate_limit_qps=1.0,
+                enabled=True,  # Free, no auth
+            ),
+            "lens": APIConfig(
+                name="lens",
+                api_key=os.getenv("LENS_API_KEY"),
+                base_url="https://api.lens.org",
+                rate_limit_qps=0.83,  # 50/min
+                enabled=bool(os.getenv("LENS_API_KEY")),
+            ),
+            "usda_ers": APIConfig(
+                name="usda_ers",
+                api_key=os.getenv("USDA_ERS_API_KEY"),
+                base_url="https://api.nal.usda.gov/pubag/rest/search",
+                rate_limit_qps=1.0,
+                enabled=True,  # Works without key
+            ),
         }
 
 

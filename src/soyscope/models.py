@@ -162,6 +162,30 @@ class CheckoffProject(BaseModel):
     imported_at: datetime | None = None
 
 
+class USBDeliverable(BaseModel):
+    """USB-funded research deliverable from CSV import."""
+    id: int | None = None
+    title: str
+    doi_link: str | None = None
+    deliverable_type: str | None = None
+    submitted_year: int | None = None
+    published_year: int | None = None
+    month: str | None = None
+    journal_name: str | None = None
+    authors: str | None = None
+    combined_authors: str | None = None
+    funders: str | None = None
+    usb_project_number: str | None = None
+    investment_category: str | None = None
+    key_categories: str | None = None
+    keywords: list[str] = Field(default_factory=list)
+    pi_name: str | None = None
+    pi_email: str | None = None
+    organization: str | None = None
+    priority_area: str | None = None
+    raw_csv_row: dict[str, Any] = Field(default_factory=dict)
+
+
 class EnrichmentRequest(BaseModel):
     """Request to enrich a batch of findings."""
     findings: list[Finding]

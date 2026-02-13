@@ -18,6 +18,7 @@ from .models import (
     SearchQuery,
     SearchRun,
     Sector,
+    USBDeliverable,
 )
 
 SCHEMA_SQL = """
@@ -134,6 +135,64 @@ CREATE TABLE IF NOT EXISTS checkoff_projects (
     imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS usb_deliverables (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    doi_link TEXT,
+    deliverable_type TEXT,
+    submitted_year INTEGER,
+    published_year INTEGER,
+    month TEXT,
+    journal_name TEXT,
+    authors TEXT,
+    combined_authors TEXT,
+    funders TEXT,
+    usb_project_number TEXT,
+    investment_category TEXT,
+    key_categories TEXT,
+    keywords TEXT,
+    pi_name TEXT,
+    pi_email TEXT,
+    organization TEXT,
+    priority_area TEXT,
+    raw_csv_row TEXT,
+    imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(title, doi_link)
+);
+
+CREATE INDEX IF NOT EXISTS idx_usb_deliverables_title ON usb_deliverables(title);
+CREATE INDEX IF NOT EXISTS idx_usb_deliverables_doi ON usb_deliverables(doi_link);
+
+CREATE TABLE IF NOT EXISTS finding_sources (
+    finding_id INTEGER REFERENCES findings(id),
+    source_api TEXT NOT NULL,
+    discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (finding_id, source_api)
+);
+
+CREATE INDEX IF NOT EXISTS idx_finding_sources_finding ON finding_sources(finding_id);
+CREATE INDEX IF NOT EXISTS idx_finding_sources_source ON finding_sources(source_api);
+
+CREATE TABLE IF NOT EXISTS search_checkpoints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER REFERENCES search_runs(id),
+    query_hash TEXT NOT NULL,
+    query_text TEXT NOT NULL,
+    query_type TEXT,
+    derivative TEXT,
+    sector TEXT,
+    year_start INTEGER,
+    year_end INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending',
+    new_findings INTEGER DEFAULT 0,
+    updated_findings INTEGER DEFAULT 0,
+    completed_at TIMESTAMP,
+    UNIQUE(run_id, query_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_checkpoints_run ON search_checkpoints(run_id);
+CREATE INDEX IF NOT EXISTS idx_checkpoints_status ON search_checkpoints(run_id, status);
+
 CREATE INDEX IF NOT EXISTS idx_findings_doi ON findings(doi);
 CREATE INDEX IF NOT EXISTS idx_findings_year ON findings(year);
 CREATE INDEX IF NOT EXISTS idx_findings_source_api ON findings(source_api);
@@ -196,7 +255,13 @@ class Database:
                         paper.raw_metadata_json,
                     ),
                 )
-                return cur.lastrowid
+                finding_id = cur.lastrowid
+                if finding_id and paper.source_api:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO finding_sources (finding_id, source_api) VALUES (?, ?)",
+                        (finding_id, paper.source_api),
+                    )
+                return finding_id
             except sqlite3.IntegrityError:
                 # Duplicate DOI - update instead
                 if paper.doi:
@@ -373,6 +438,58 @@ class Database:
                 (finding_id, tag_id),
             )
 
+    # ── Finding Sources (multi-source tracking) ──
+
+    def add_finding_source(self, finding_id: int, source_api: str) -> None:
+        """Record that a finding was discovered in a particular API source."""
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO finding_sources (finding_id, source_api) VALUES (?, ?)",
+                (finding_id, source_api),
+            )
+
+    def get_finding_sources(self, finding_id: int) -> list[str]:
+        """Return all source_api values for a finding."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT source_api FROM finding_sources WHERE finding_id = ? ORDER BY discovered_at",
+                (finding_id,),
+            ).fetchall()
+            return [r[0] for r in rows]
+
+    def get_all_finding_sources_map(self) -> dict[int, list[str]]:
+        """Return a mapping of finding_id -> [source_api, ...] for all findings."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT finding_id, source_api FROM finding_sources ORDER BY finding_id, discovered_at"
+            ).fetchall()
+
+        result: dict[int, list[str]] = {}
+        for fid, src in rows:
+            result.setdefault(fid, []).append(src)
+        return result
+
+    def get_doi_to_id_map(self) -> dict[str, int]:
+        """Return a mapping of DOI -> finding_id for all findings with DOIs."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT doi, id FROM findings WHERE doi IS NOT NULL"
+            ).fetchall()
+            return {r[0]: r[1] for r in rows}
+
+    def backfill_finding_sources(self) -> int:
+        """Seed finding_sources from existing findings.source_api column.
+
+        Returns the number of rows inserted.
+        """
+        with self.connect() as conn:
+            cur = conn.execute(
+                """INSERT OR IGNORE INTO finding_sources (finding_id, source_api)
+                   SELECT id, source_api FROM findings
+                   WHERE source_api IS NOT NULL AND source_api != ''"""
+            )
+            return cur.rowcount
+
     # ── Enrichments ──
 
     def insert_enrichment(self, enrichment: Enrichment) -> int:
@@ -483,9 +600,149 @@ class Database:
             except sqlite3.IntegrityError:
                 return None
 
+    def insert_checkoff_projects_batch(self, projects: list[CheckoffProject]) -> int:
+        """Insert multiple checkoff projects in a single transaction.
+
+        Returns the number of successfully inserted projects (skips duplicates).
+        """
+        if not projects:
+            return 0
+
+        rows = [
+            (
+                p.year,
+                p.title,
+                p.category,
+                json.dumps(p.keywords),
+                p.lead_pi,
+                p.institution,
+                p.funding,
+                p.summary,
+                p.objectives,
+                p.url,
+            )
+            for p in projects
+        ]
+
+        inserted = 0
+        with self.connect() as conn:
+            for row in rows:
+                try:
+                    conn.execute(
+                        """INSERT INTO checkoff_projects
+                           (year, title, category, keywords, lead_pi, institution, funding,
+                            summary, objectives, url)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        row,
+                    )
+                    inserted += 1
+                except sqlite3.IntegrityError:
+                    pass  # skip duplicates
+        return inserted
+
+    def insert_findings_batch(self, papers: list[Paper]) -> int:
+        """Insert multiple findings in a single transaction.
+
+        Returns the number of successfully inserted findings (skips duplicates).
+        """
+        if not papers:
+            return 0
+
+        inserted = 0
+        with self.connect() as conn:
+            for paper in papers:
+                try:
+                    cur = conn.execute(
+                        """INSERT INTO findings
+                           (title, abstract, year, doi, url, pdf_url, authors, venue,
+                            source_api, source_type, citation_count, open_access_status, raw_metadata)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            paper.title,
+                            paper.abstract,
+                            paper.year,
+                            paper.doi,
+                            paper.url,
+                            paper.pdf_url,
+                            paper.authors_json,
+                            paper.venue,
+                            paper.source_api,
+                            paper.source_type.value if hasattr(paper.source_type, "value") else paper.source_type,
+                            paper.citation_count,
+                            paper.open_access_status.value if paper.open_access_status and hasattr(paper.open_access_status, "value") else paper.open_access_status,
+                            paper.raw_metadata_json,
+                        ),
+                    )
+                    finding_id = cur.lastrowid
+                    if finding_id and paper.source_api:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO finding_sources (finding_id, source_api) VALUES (?, ?)",
+                            (finding_id, paper.source_api),
+                        )
+                    inserted += 1
+                except sqlite3.IntegrityError:
+                    # Duplicate DOI - update instead
+                    if paper.doi:
+                        conn.execute(
+                            """UPDATE findings SET citation_count = ?, updated_at = CURRENT_TIMESTAMP
+                               WHERE doi = ?""",
+                            (paper.citation_count, paper.doi),
+                        )
+        return inserted
+
     def get_checkoff_count(self) -> int:
         with self.connect() as conn:
             return conn.execute("SELECT COUNT(*) FROM checkoff_projects").fetchone()[0]
+
+    # ── USB Deliverables ──
+
+    def insert_usb_deliverable(self, deliverable: USBDeliverable) -> int | None:
+        with self.connect() as conn:
+            try:
+                cur = conn.execute(
+                    """INSERT INTO usb_deliverables
+                       (title, doi_link, deliverable_type, submitted_year, published_year,
+                        month, journal_name, authors, combined_authors, funders,
+                        usb_project_number, investment_category, key_categories, keywords,
+                        pi_name, pi_email, organization, priority_area, raw_csv_row)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        deliverable.title,
+                        deliverable.doi_link,
+                        deliverable.deliverable_type,
+                        deliverable.submitted_year,
+                        deliverable.published_year,
+                        deliverable.month,
+                        deliverable.journal_name,
+                        deliverable.authors,
+                        deliverable.combined_authors,
+                        deliverable.funders,
+                        deliverable.usb_project_number,
+                        deliverable.investment_category,
+                        deliverable.key_categories,
+                        json.dumps(deliverable.keywords),
+                        deliverable.pi_name,
+                        deliverable.pi_email,
+                        deliverable.organization,
+                        deliverable.priority_area,
+                        json.dumps(deliverable.raw_csv_row),
+                    ),
+                )
+                return cur.lastrowid
+            except sqlite3.IntegrityError:
+                return None
+
+    def get_usb_deliverables_count(self) -> int:
+        with self.connect() as conn:
+            return conn.execute("SELECT COUNT(*) FROM usb_deliverables").fetchone()[0]
+
+    def update_finding_oa(self, finding_id: int, pdf_url: str | None, open_access_status: str | None) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """UPDATE findings SET pdf_url = ?, open_access_status = ?, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ?""",
+                (pdf_url, open_access_status, finding_id),
+            )
 
     # ── Statistics ──
 
@@ -497,6 +754,7 @@ class Database:
             stats["total_derivatives"] = conn.execute("SELECT COUNT(*) FROM derivatives").fetchone()[0]
             stats["total_enriched"] = conn.execute("SELECT COUNT(*) FROM enrichments").fetchone()[0]
             stats["total_checkoff"] = conn.execute("SELECT COUNT(*) FROM checkoff_projects").fetchone()[0]
+            stats["total_usb_deliverables"] = conn.execute("SELECT COUNT(*) FROM usb_deliverables").fetchone()[0]
             stats["total_tags"] = conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0]
             stats["total_runs"] = conn.execute("SELECT COUNT(*) FROM search_runs").fetchone()[0]
 
@@ -543,4 +801,162 @@ class Database:
                 {"sector": r[0], "derivative": r[1], "count": r[2]} for r in rows
             ]
 
+            # Multi-source tracking stats
+            try:
+                stats["findings_with_multiple_sources"] = conn.execute(
+                    """SELECT COUNT(*) FROM (
+                        SELECT finding_id FROM finding_sources
+                        GROUP BY finding_id HAVING COUNT(*) > 1
+                    )"""
+                ).fetchone()[0]
+
+                rows = conn.execute(
+                    """SELECT source_api, COUNT(*) as cnt
+                       FROM finding_sources GROUP BY source_api ORDER BY cnt DESC"""
+                ).fetchall()
+                stats["by_source_tracked"] = {r[0]: r[1] for r in rows}
+
+                stats["avg_sources_per_finding"] = conn.execute(
+                    """SELECT AVG(cnt) FROM (
+                        SELECT COUNT(*) as cnt FROM finding_sources GROUP BY finding_id
+                    )"""
+                ).fetchone()[0] or 0.0
+            except Exception:
+                stats["findings_with_multiple_sources"] = 0
+                stats["by_source_tracked"] = {}
+                stats["avg_sources_per_finding"] = 0.0
+
             return stats
+
+    # ── Search Checkpoints (resume-safe ingestion) ──
+
+    def insert_checkpoint_batch(self, run_id: int,
+                                checkpoints: list[dict[str, Any]]) -> int:
+        """Insert a batch of checkpoint records for a query plan.
+
+        Each dict must have: query_hash, query_text.
+        Optional: query_type, derivative, sector, year_start, year_end.
+        Returns number inserted (skips existing via UNIQUE constraint).
+        """
+        inserted = 0
+        with self.connect() as conn:
+            for cp in checkpoints:
+                try:
+                    conn.execute(
+                        """INSERT INTO search_checkpoints
+                           (run_id, query_hash, query_text, query_type,
+                            derivative, sector, year_start, year_end, status)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+                        (
+                            run_id,
+                            cp["query_hash"],
+                            cp["query_text"],
+                            cp.get("query_type"),
+                            cp.get("derivative"),
+                            cp.get("sector"),
+                            cp.get("year_start"),
+                            cp.get("year_end"),
+                        ),
+                    )
+                    inserted += 1
+                except sqlite3.IntegrityError:
+                    pass  # already exists
+        return inserted
+
+    def get_pending_checkpoints(self, run_id: int) -> list[dict[str, Any]]:
+        """Return all checkpoints that haven't completed yet for a run."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                """SELECT * FROM search_checkpoints
+                   WHERE run_id = ? AND status = 'pending'
+                   ORDER BY id""",
+                (run_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def complete_checkpoint(self, checkpoint_id: int,
+                            new_findings: int = 0,
+                            updated_findings: int = 0) -> None:
+        """Mark a checkpoint as completed."""
+        with self.connect() as conn:
+            conn.execute(
+                """UPDATE search_checkpoints
+                   SET status = 'completed', new_findings = ?,
+                       updated_findings = ?, completed_at = CURRENT_TIMESTAMP
+                   WHERE id = ?""",
+                (new_findings, updated_findings, checkpoint_id),
+            )
+
+    def fail_checkpoint(self, checkpoint_id: int) -> None:
+        """Mark a checkpoint as failed (will be retried on resume)."""
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE search_checkpoints SET status = 'failed' WHERE id = ?",
+                (checkpoint_id,),
+            )
+
+    def reset_failed_checkpoints(self, run_id: int) -> int:
+        """Reset failed checkpoints back to pending for retry."""
+        with self.connect() as conn:
+            cur = conn.execute(
+                """UPDATE search_checkpoints SET status = 'pending'
+                   WHERE run_id = ? AND status = 'failed'""",
+                (run_id,),
+            )
+            return cur.rowcount
+
+    def get_checkpoint_progress(self, run_id: int) -> dict[str, int]:
+        """Return checkpoint progress summary for a run."""
+        with self.connect() as conn:
+            total = conn.execute(
+                "SELECT COUNT(*) FROM search_checkpoints WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()[0]
+            completed = conn.execute(
+                "SELECT COUNT(*) FROM search_checkpoints WHERE run_id = ? AND status = 'completed'",
+                (run_id,),
+            ).fetchone()[0]
+            failed = conn.execute(
+                "SELECT COUNT(*) FROM search_checkpoints WHERE run_id = ? AND status = 'failed'",
+                (run_id,),
+            ).fetchone()[0]
+            pending = conn.execute(
+                "SELECT COUNT(*) FROM search_checkpoints WHERE run_id = ? AND status = 'pending'",
+                (run_id,),
+            ).fetchone()[0]
+            new_total = conn.execute(
+                "SELECT COALESCE(SUM(new_findings), 0) FROM search_checkpoints WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()[0]
+            updated_total = conn.execute(
+                "SELECT COALESCE(SUM(updated_findings), 0) FROM search_checkpoints WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()[0]
+            return {
+                "total": total,
+                "completed": completed,
+                "failed": failed,
+                "pending": pending,
+                "new_findings": new_total,
+                "updated_findings": updated_total,
+            }
+
+    def get_last_incomplete_run(self, run_type: str) -> dict[str, Any] | None:
+        """Find the most recent run of a given type that wasn't completed."""
+        with self.connect() as conn:
+            row = conn.execute(
+                """SELECT * FROM search_runs
+                   WHERE run_type = ? AND status IN ('running', 'interrupted')
+                   ORDER BY started_at DESC LIMIT 1""",
+                (run_type,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def interrupt_search_run(self, run_id: int) -> None:
+        """Mark a search run as interrupted (resumable)."""
+        with self.connect() as conn:
+            conn.execute(
+                """UPDATE search_runs SET status = 'interrupted',
+                   completed_at = CURRENT_TIMESTAMP WHERE id = ?""",
+                (run_id,),
+            )

@@ -113,6 +113,7 @@ circuit_breakers = CircuitBreakerRegistry()
 def setup_circuit_breakers() -> CircuitBreakerRegistry:
     """Set up circuit breakers for all known APIs."""
     for name in ["exa", "openalex", "semantic_scholar", "crossref",
-                 "pubmed", "tavily", "core", "unpaywall", "claude"]:
+                 "pubmed", "tavily", "core", "unpaywall", "claude",
+                 "osti", "patentsview", "sbir", "agris", "lens", "usda_ers"]:
         circuit_breakers.register(name, failure_threshold=5, recovery_timeout=60.0)
     return circuit_breakers

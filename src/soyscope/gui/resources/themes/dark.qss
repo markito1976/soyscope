@@ -1,0 +1,32 @@
+QMainWindow, QWidget { background-color: #1e1e2e; color: #cdd6f4; }
+QTabWidget::pane { border: 1px solid #45475a; background: #1e1e2e; }
+QTabBar::tab { background: #313244; color: #cdd6f4; padding: 8px 16px;
+    border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }
+QTabBar::tab:selected { background: #45475a; color: #89b4fa; }
+QTableView { background-color: #181825; alternate-background-color: #1e1e2e;
+    gridline-color: #313244; selection-background-color: #45475a; }
+QHeaderView::section { background-color: #313244; color: #cdd6f4;
+    padding: 4px; border: 1px solid #45475a; font-weight: bold; }
+QProgressBar { border: 1px solid #45475a; border-radius: 4px;
+    text-align: center; background: #181825; }
+QProgressBar::chunk { background-color: #89b4fa; border-radius: 3px; }
+QPushButton { background-color: #45475a; color: #cdd6f4; border: none;
+    padding: 6px 16px; border-radius: 4px; }
+QPushButton:hover { background-color: #585b70; }
+QPushButton:pressed { background-color: #89b4fa; color: #1e1e2e; }
+QLineEdit, QComboBox, QSpinBox { background: #313244; color: #cdd6f4;
+    border: 1px solid #45475a; border-radius: 4px; padding: 4px 8px; }
+QLineEdit:focus, QComboBox:focus { border-color: #89b4fa; }
+QGroupBox { border: 1px solid #45475a; border-radius: 4px;
+    margin-top: 8px; padding-top: 16px; font-weight: bold; }
+QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
+QSplitter::handle { background-color: #45475a; }
+QPlainTextEdit { background: #11111b; color: #a6adc8;
+    font-family: 'Cascadia Code', 'Consolas', monospace; }
+QScrollBar:vertical { background: #181825; width: 10px; }
+QScrollBar::handle:vertical { background: #45475a; border-radius: 5px; min-height: 30px; }
+QScrollBar::add-line, QScrollBar::sub-line { height: 0; }
+QToolTip { background: #313244; color: #cdd6f4; border: 1px solid #45475a;
+    padding: 4px; border-radius: 4px; }
+QLabel { color: #cdd6f4; }
+QStatusBar { background: #181825; color: #a6adc8; }
