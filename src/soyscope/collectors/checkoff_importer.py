@@ -118,9 +118,13 @@ class CheckoffImporter:
         if isinstance(keywords, str):
             keywords = [k.strip() for k in keywords.split(",") if k.strip()]
 
-        funding = item.get("funding") or item.get("total_funding") or item.get("amount")
+        funding = (item.get("checkoff_funding") or item.get("funding")
+                   or item.get("total_funding") or item.get("amount"))
         if isinstance(funding, str):
             funding = float(funding.replace("$", "").replace(",", "")) if funding.strip() else None
+
+        summary = (item.get("brief_summary") or item.get("project_summary")
+                   or item.get("summary") or item.get("description") or item.get("abstract", ""))
 
         return CheckoffProject(
             year=str(item.get("year", "")),
@@ -128,10 +132,11 @@ class CheckoffImporter:
             category=item.get("category") or item.get("research_area", ""),
             keywords=keywords,
             lead_pi=item.get("lead_pi") or item.get("pi") or item.get("principal_investigator", ""),
-            institution=item.get("institution") or item.get("university", ""),
+            institution=(item.get("lead_pi_institution") or item.get("institution")
+                         or item.get("university", "")),
             funding=float(funding) if funding else None,
-            summary=item.get("summary") or item.get("description") or item.get("abstract", ""),
-            objectives=item.get("objectives", ""),
+            summary=summary,
+            objectives=item.get("objectives") or item.get("deliverables", ""),
             url=item.get("url") or item.get("link", ""),
         )
 
