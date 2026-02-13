@@ -102,10 +102,10 @@ class Settings:
             ),
             "core": APIConfig(
                 name="core",
-                api_key=os.getenv("CORE_API_KEY"),
+                api_key=os.getenv("CORE_API_KEY"),  # Optional: higher rate limits with key
                 base_url="https://api.core.ac.uk/v3",
-                rate_limit_qps=5.0,
-                enabled=bool(os.getenv("CORE_API_KEY")),
+                rate_limit_qps=0.5,  # 5 req/10 sec without key
+                enabled=True,  # Works without API key
             ),
             "unpaywall": APIConfig(
                 name="unpaywall",
