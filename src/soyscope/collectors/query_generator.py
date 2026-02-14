@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -214,7 +215,8 @@ SECTOR_KEYWORDS: dict[str, list[str]] = {
     ],
 }
 
-TIME_WINDOWS = [(2000, 2004), (2005, 2009), (2010, 2014), (2015, 2019), (2020, 2026)]
+_CURRENT_YEAR = datetime.now().year
+TIME_WINDOWS = [(2000, 2004), (2005, 2009), (2010, 2014), (2015, 2019), (2020, _CURRENT_YEAR)]
 
 # ---------------------------------------------------------------------------
 # Semantic / conceptual queries for *implicit* industrial relevance
@@ -507,7 +509,7 @@ def generate_refresh_queries(
     """
     derivatives, sectors = load_taxonomy(taxonomy_path)
     plans: list[QueryPlan] = []
-    current_year = 2026
+    current_year = _CURRENT_YEAR
 
     for derivative in derivatives:
         for sector in sectors:

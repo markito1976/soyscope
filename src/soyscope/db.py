@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS finding_derivatives (
 
 CREATE TABLE IF NOT EXISTS enrichments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    finding_id INTEGER UNIQUE REFERENCES findings(id),
+    finding_id INTEGER REFERENCES findings(id),
     tier TEXT NOT NULL,
     trl_estimate INTEGER,
     commercialization_status TEXT,
@@ -199,6 +199,7 @@ CREATE INDEX IF NOT EXISTS idx_findings_year ON findings(year);
 CREATE INDEX IF NOT EXISTS idx_findings_source_api ON findings(source_api);
 CREATE INDEX IF NOT EXISTS idx_findings_title ON findings(title);
 CREATE INDEX IF NOT EXISTS idx_enrichments_finding_id ON enrichments(finding_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_enrichments_finding_tier ON enrichments(finding_id, tier);
 CREATE INDEX IF NOT EXISTS idx_enrichments_novelty ON enrichments(novelty_score);
 CREATE INDEX IF NOT EXISTS idx_search_queries_run_id ON search_queries(run_id);
 
@@ -247,6 +248,54 @@ class Database:
     def init_schema(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA_SQL)
+            self._migrate_enrichments_schema(conn)
+
+    def _migrate_enrichments_schema(self, conn: sqlite3.Connection) -> None:
+        """Migrate enrichments from old per-finding uniqueness to per-tier uniqueness."""
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'enrichments'"
+        ).fetchone()
+        if not row or not row[0]:
+            return
+
+        table_sql = str(row[0]).lower()
+        if "finding_id integer unique" not in table_sql:
+            return
+
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS enrichments_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                finding_id INTEGER REFERENCES findings(id),
+                tier TEXT NOT NULL,
+                trl_estimate INTEGER,
+                commercialization_status TEXT,
+                novelty_score REAL,
+                ai_summary TEXT,
+                key_metrics TEXT,
+                key_players TEXT,
+                soy_advantage TEXT,
+                barriers TEXT,
+                enriched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                model_used TEXT
+            );
+
+            INSERT INTO enrichments_new
+                (id, finding_id, tier, trl_estimate, commercialization_status, novelty_score,
+                 ai_summary, key_metrics, key_players, soy_advantage, barriers, enriched_at, model_used)
+            SELECT
+                id, finding_id, tier, trl_estimate, commercialization_status, novelty_score,
+                ai_summary, key_metrics, key_players, soy_advantage, barriers, enriched_at, model_used
+            FROM enrichments;
+
+            DROP TABLE enrichments;
+            ALTER TABLE enrichments_new RENAME TO enrichments;
+
+            CREATE INDEX IF NOT EXISTS idx_enrichments_finding_id ON enrichments(finding_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_enrichments_finding_tier ON enrichments(finding_id, tier);
+            CREATE INDEX IF NOT EXISTS idx_enrichments_novelty ON enrichments(novelty_score);
+            """
+        )
 
     # ── Findings CRUD ──
 
@@ -512,17 +561,34 @@ class Database:
     # ── Enrichments ──
 
     def insert_enrichment(self, enrichment: Enrichment) -> int:
+        tier_value = enrichment.tier.value if hasattr(enrichment.tier, "value") else enrichment.tier
+        status_value = (
+            enrichment.commercialization_status.value
+            if enrichment.commercialization_status and hasattr(enrichment.commercialization_status, "value")
+            else enrichment.commercialization_status
+        )
         with self.connect() as conn:
-            cur = conn.execute(
-                """INSERT OR REPLACE INTO enrichments
+            conn.execute(
+                """INSERT INTO enrichments
                    (finding_id, tier, trl_estimate, commercialization_status, novelty_score,
                     ai_summary, key_metrics, key_players, soy_advantage, barriers, model_used)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(finding_id, tier) DO UPDATE SET
+                       trl_estimate = excluded.trl_estimate,
+                       commercialization_status = excluded.commercialization_status,
+                       novelty_score = excluded.novelty_score,
+                       ai_summary = excluded.ai_summary,
+                       key_metrics = excluded.key_metrics,
+                       key_players = excluded.key_players,
+                       soy_advantage = excluded.soy_advantage,
+                       barriers = excluded.barriers,
+                       model_used = excluded.model_used,
+                       enriched_at = CURRENT_TIMESTAMP""",
                 (
                     enrichment.finding_id,
-                    enrichment.tier.value if hasattr(enrichment.tier, "value") else enrichment.tier,
+                    tier_value,
                     enrichment.trl_estimate,
-                    enrichment.commercialization_status.value if enrichment.commercialization_status and hasattr(enrichment.commercialization_status, "value") else enrichment.commercialization_status,
+                    status_value,
                     enrichment.novelty_score,
                     enrichment.ai_summary,
                     json.dumps(enrichment.key_metrics),
@@ -532,11 +598,29 @@ class Database:
                     enrichment.model_used,
                 ),
             )
-            return cur.lastrowid
+            row = conn.execute(
+                "SELECT id FROM enrichments WHERE finding_id = ? AND tier = ?",
+                (enrichment.finding_id, tier_value),
+            ).fetchone()
+            return row[0] if row else 0
 
     def get_enrichment(self, finding_id: int) -> dict[str, Any] | None:
         with self.connect() as conn:
-            row = conn.execute("SELECT * FROM enrichments WHERE finding_id = ?", (finding_id,)).fetchone()
+            row = conn.execute(
+                """SELECT * FROM enrichments
+                   WHERE finding_id = ?
+                   ORDER BY
+                       CASE tier
+                           WHEN 'deep' THEN 3
+                           WHEN 'summary' THEN 2
+                           WHEN 'catalog' THEN 1
+                           ELSE 0
+                       END DESC,
+                       enriched_at DESC,
+                       id DESC
+                   LIMIT 1""",
+                (finding_id,),
+            ).fetchone()
             return dict(row) if row else None
 
     # ── Search Runs ──
@@ -992,6 +1076,8 @@ class Database:
     def insert_known_application(self, app: KnownApplication) -> int:
         """Insert a known application entry."""
         with self.connect() as conn:
+            if self._known_application_exists(conn, app):
+                return -1
             try:
                 cur = conn.execute(
                     """INSERT INTO known_applications
@@ -1035,6 +1121,29 @@ class Database:
         with self.connect() as conn:
             return conn.execute("SELECT COUNT(*) FROM known_applications").fetchone()[0]
 
+    @staticmethod
+    def _known_application_exists(conn: sqlite3.Connection, app: KnownApplication) -> bool:
+        """Return True if an equivalent known application row already exists."""
+        row = conn.execute(
+            """SELECT 1 FROM known_applications
+               WHERE COALESCE(product_name, '') = COALESCE(?, '')
+                 AND COALESCE(manufacturer, '') = COALESCE(?, '')
+                 AND sector = ?
+                 AND COALESCE(derivative, '') = COALESCE(?, '')
+                 AND category = ?
+                 AND COALESCE(description, '') = COALESCE(?, '')
+               LIMIT 1""",
+            (
+                app.product_name,
+                app.manufacturer,
+                app.sector,
+                app.derivative,
+                app.category,
+                app.description,
+            ),
+        ).fetchone()
+        return row is not None
+
     def seed_known_applications(self, apps: list[KnownApplication]) -> int:
         """Seed known applications table from a list, skipping existing entries.
 
@@ -1043,6 +1152,8 @@ class Database:
         inserted = 0
         with self.connect() as conn:
             for app in apps:
+                if self._known_application_exists(conn, app):
+                    continue
                 try:
                     conn.execute(
                         """INSERT INTO known_applications

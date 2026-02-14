@@ -87,6 +87,7 @@ class HistoricalBuilder:
         taxonomy_path = self.settings.data_dir / "taxonomy.json"
         plans = generate_full_query_plan(
             taxonomy_path=taxonomy_path if taxonomy_path.exists() else None,
+            time_windows=self.settings.time_windows,
         )
 
         if max_queries:
@@ -147,8 +148,8 @@ class HistoricalBuilder:
 
         semaphore = asyncio.Semaphore(concurrency)
 
-        async def execute_query(cp: dict[str, Any]) -> tuple[int, int, int]:
-            """Returns (new, updated, checkpoint_id)."""
+        async def execute_query(cp: dict[str, Any]) -> tuple[int, int, int, bool]:
+            """Returns (new, updated, checkpoint_id, failed)."""
             cp_id = cp["id"]
             q_hash = cp["query_hash"]
             plan = plan_by_hash.get(q_hash)
@@ -156,7 +157,7 @@ class HistoricalBuilder:
             if plan is None:
                 # Orphan checkpoint — query plan changed. Skip it.
                 self.db.complete_checkpoint(cp_id, 0, 0)
-                return 0, 0, cp_id
+                return 0, 0, cp_id, False
 
             async with semaphore:
                 try:
@@ -192,7 +193,7 @@ class HistoricalBuilder:
                             "elapsed_seconds": time.time() - start_time,
                         })
 
-                    return new, updated, cp_id
+                    return new, updated, cp_id, False
                 except Exception as e:
                     logger.error(f"Query failed (cp #{cp_id}): {plan.query}: {e}")
                     self.db.fail_checkpoint(cp_id)
@@ -207,7 +208,7 @@ class HistoricalBuilder:
                             "elapsed_seconds": time.time() - start_time,
                         })
 
-                    return 0, 0, cp_id
+                    return 0, 0, cp_id, True
 
         # Execute with progress bar
         with Progress(
@@ -234,9 +235,11 @@ class HistoricalBuilder:
                             errors += 1
                             logger.error(f"Batch query error: {result}")
                         else:
-                            new, updated, _ = result
+                            new, updated, _, failed = result
                             total_new += new
                             total_updated += updated
+                            if failed:
+                                errors += 1
 
                         progress.update(task, advance=1)
 

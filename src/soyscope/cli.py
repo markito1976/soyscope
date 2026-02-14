@@ -80,7 +80,7 @@ def _build_sources():
         from .sources.tavily_source import TavilySource
         sources.append(TavilySource(api_key=api_cfg["tavily"].api_key))
 
-    if api_cfg["core"].enabled and api_cfg["core"].api_key:
+    if api_cfg["core"].enabled:
         from .sources.core_source import CoreSource
         sources.append(CoreSource(api_key=api_cfg["core"].api_key))
 

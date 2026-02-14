@@ -291,7 +291,7 @@ class SoyScopeMainWindow(QMainWindow):
             "SoyScope — Industrial Soy Research Dashboard\n\n"
             "Builds and maintains a comprehensive database of\n"
             "industrial uses of soy over the past 25 years.\n\n"
-            "8 search APIs + Claude AI enrichment\n"
+            "14 search APIs + Claude AI enrichment\n"
             "SQLite + Excel + Word + PySide6 GUI\n\n"
             "United Soybean Board",
         )

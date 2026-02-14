@@ -9,9 +9,11 @@ from typing import Any
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
+from ..collectors.query_generator import SECTOR_KEYWORDS
 from ..config import Settings, get_settings
 from ..db import Database
 from ..models import Enrichment, EnrichmentTier
+from ..novelty import score_finding_novelty
 from .classifier import Classifier
 from .novelty_scorer import score_novelty
 from .summarizer import Summarizer
@@ -51,6 +53,8 @@ class BatchEnricher:
 
         sectors = self.db.get_all_sectors()
         derivatives = self.db.get_all_derivatives()
+        known_apps = self.db.get_all_known_applications()
+        use_known_baseline = bool(known_apps)
         sector_names = {s["name"].lower(): s["id"] for s in sectors}
         derivative_names = {d["name"].lower(): d["id"] for d in derivatives}
 
@@ -79,14 +83,28 @@ class BatchEnricher:
                     if any(kw in text for kw in keywords if len(kw) > 3):
                         self.db.link_finding_derivative(finding["id"], did, confidence=0.6)
 
-                # Novelty score
-                novelty = score_novelty(
-                    title=finding["title"],
-                    abstract=finding.get("abstract"),
-                    year=finding.get("year"),
-                    citation_count=finding.get("citation_count"),
-                    source_type=finding.get("source_type"),
-                )
+                # Novelty score:
+                # - Primary path: compare against known commercial applications.
+                # - Fallback path: heuristic scorer when no known-app baseline exists.
+                if use_known_baseline:
+                    novelty_result = score_finding_novelty(
+                        finding={
+                            "id": finding["id"],
+                            "title": finding["title"],
+                            "abstract": finding.get("abstract"),
+                        },
+                        known_apps=known_apps,
+                        sector_keywords=SECTOR_KEYWORDS,
+                    )
+                    novelty = round(novelty_result.novelty_score / 100.0, 3)
+                else:
+                    novelty = score_novelty(
+                        title=finding["title"],
+                        abstract=finding.get("abstract"),
+                        year=finding.get("year"),
+                        citation_count=finding.get("citation_count"),
+                        source_type=finding.get("source_type"),
+                    )
 
                 # Store enrichment
                 enrichment = Enrichment(
@@ -204,11 +222,19 @@ class BatchEnricher:
             findings = [
                 dict(r)
                 for r in conn.execute(
-                    """SELECT f.*, e.novelty_score FROM findings f
-                       JOIN enrichments e ON f.id = e.finding_id
-                       WHERE e.novelty_score >= ?
-                       AND e.tier != 'deep'
-                       ORDER BY e.novelty_score DESC
+                    """SELECT f.*, n.novelty_score FROM findings f
+                       JOIN (
+                           SELECT finding_id, MAX(novelty_score) AS novelty_score
+                           FROM enrichments
+                           WHERE tier IN ('catalog', 'summary')
+                           GROUP BY finding_id
+                       ) n ON f.id = n.finding_id
+                       WHERE n.novelty_score >= ?
+                         AND NOT EXISTS (
+                             SELECT 1 FROM enrichments d
+                             WHERE d.finding_id = f.id AND d.tier = 'deep'
+                         )
+                       ORDER BY n.novelty_score DESC
                        LIMIT ?""",
                     (self.settings.novelty_threshold, limit),
                 ).fetchall()
