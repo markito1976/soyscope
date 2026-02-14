@@ -1,6 +1,6 @@
 # SoyScope: Industrial Soy Uses Search & Tracking Tool
 
-A comprehensive tool that builds and maintains a database of **all industrial uses (and potential uses) of soy** over the past 25 years. Uses 8 search APIs, AI enrichment via Claude, and outputs to SQLite + Excel + Word + Streamlit dashboard.
+A comprehensive tool that builds and maintains a database of **all industrial uses (and potential uses) of soy** over the past 25 years. Uses 14 search APIs, AI enrichment via Claude, and outputs to SQLite + Excel + Word + Streamlit + PySide6 desktop GUI.
 
 ## Quick Start
 
@@ -21,6 +21,9 @@ soyscope import-checkoff
 # Run the full 25-year historical build
 soyscope build
 
+# If interrupted, resume where you left off
+soyscope build --resume
+
 # Run AI enrichment
 soyscope enrich
 
@@ -31,11 +34,14 @@ soyscope stats
 soyscope export excel
 soyscope export word
 
-# Launch interactive dashboard
+# Launch PySide6 desktop GUI
+soyscope gui
+
+# Or launch Streamlit dashboard
 soyscope dashboard
 ```
 
-## API Sources (8)
+## API Sources (14)
 
 | # | API | Purpose | Auth Required |
 |---|-----|---------|---------------|
@@ -47,20 +53,44 @@ soyscope dashboard
 | 6 | Tavily | Web/news/industry | API key |
 | 7 | CORE | Full-text open access | API key (free) |
 | 8 | Unpaywall | OA PDF location | Email |
+| 9 | OSTI.gov | DOE research | None |
+| 10 | PatentsView | USPTO patents | API key (free) |
+| 11 | SBIR/STTR | Federal innovation awards | None |
+| 12 | AGRIS/FAO | Multilingual ag records | None |
+| 13 | Lens.org | Scholarly + patents | Bearer token (free trial) |
+| 14 | USDA ERS | USDA publications | API key (free) |
 
 Plus **Claude AI** for enrichment and analysis.
+
+## PySide6 Desktop GUI
+
+Launch with `soyscope gui` or `SoyScope.bat`. Features:
+
+- **Overview** — KPI cards, charts, database statistics
+- **Explorer** — Searchable, filterable findings table (50K+ row virtual scrolling)
+- **Matrix** — Interactive heatmap (derivative × sector)
+- **Trends** — Timeline/area charts by year
+- **Novel Uses** — AI-enriched findings ranked by novelty score
+- **Run History** — Full Build Dashboard with live transparency:
+  - 14-source health grid with status indicators
+  - Real-time progress (query counter, ETA, rate)
+  - Live findings feed as data arrives
+  - Per-source statistics table
 
 ## CLI Commands
 
 ```
-soyscope build              # Initial 25-year historical build
+soyscope build [--resume]   # Initial 25-year historical build (checkpoint/resume)
 soyscope refresh            # Incremental update since last run
 soyscope enrich             # Run AI enrichment on un-enriched findings
 soyscope import-checkoff    # Import soybean_scraper data
+soyscope import-deliverables --path FILE  # Import USB deliverables CSV
+soyscope resolve-oa         # Resolve OA links via Unpaywall
 soyscope stats              # Show database statistics
 soyscope export excel       # Generate Excel workbook
 soyscope export word        # Generate Word summary report
 soyscope dashboard          # Launch Streamlit dashboard
+soyscope gui                # Launch PySide6 desktop GUI
 soyscope search "query"     # Ad-hoc search across all APIs
 soyscope init               # Initialize DB and seed taxonomy
 ```
@@ -74,7 +104,7 @@ soyscope init               # Initialize DB and seed taxonomy
 ## Testing
 
 ```bash
-pytest tests/
+pytest tests/  # 200 tests passing
 ```
 
 ## Project Structure
@@ -91,8 +121,9 @@ src/soyscope/
 ├── dedup.py           # DOI + fuzzy title deduplication
 ├── ranking.py         # Reciprocal Rank Fusion
 ├── cache.py           # diskcache search caching
-├── sources/           # 8 API adapters
+├── sources/           # 14 API adapters
 ├── enrichment/        # Claude AI classification + analysis
-├── collectors/        # Search orchestration + data import
+├── collectors/        # Search orchestration + query generation + data import
+├── gui/               # PySide6 desktop GUI (32 files, MVD architecture)
 └── outputs/           # Excel, Word, Streamlit exports
 ```
