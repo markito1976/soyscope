@@ -161,3 +161,38 @@ class TestDatabase:
         assert stats["total_findings"] == 1
         assert stats["total_sectors"] == 1
         assert stats["total_derivatives"] == 1
+
+    def test_set_and_get_finding_label(self, db, sample_paper):
+        fid = db.insert_finding(sample_paper)
+        db.set_finding_label(fid, "relevant", notes="Strong industrial fit")
+        row = db.get_finding_label(fid)
+        assert row is not None
+        assert row["label"] == "relevant"
+        assert row["notes"] == "Strong industrial fit"
+
+    def test_set_finding_label_invalid(self, db, sample_paper):
+        fid = db.insert_finding(sample_paper)
+        with pytest.raises(ValueError):
+            db.set_finding_label(fid, "maybe")
+
+    def test_labeled_findings_use_latest_highest_tier(self, db, sample_paper):
+        fid = db.insert_finding(sample_paper)
+        db.set_finding_label(fid, "relevant")
+        db.insert_enrichment(
+            Enrichment(
+                finding_id=fid,
+                tier=EnrichmentTier.CATALOG,
+                novelty_score=0.80,
+            )
+        )
+        db.insert_enrichment(
+            Enrichment(
+                finding_id=fid,
+                tier=EnrichmentTier.DEEP,
+                novelty_score=0.60,
+            )
+        )
+        rows = db.get_labeled_findings_with_latest_enrichment()
+        assert len(rows) == 1
+        assert rows[0]["enrichment_tier"] == "deep"
+        assert rows[0]["novelty_score"] == 0.60

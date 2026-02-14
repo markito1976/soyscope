@@ -248,3 +248,16 @@ This file must be updated again at session end with:
 - `2026-02-14 17:43:05 -06:00`:
   - Committed this handoff file as `d5fa2c4`.
   - Confirmed branch head and left only temporary local artifacts untracked.
+- `2026-02-14 17:49:33 -06:00`:
+  - In-progress work started: adding benchmark tooling for labeled relevance evaluation.
+  - Planned changes: `db.py` (`finding_labels` schema + CRUD), new evaluation module, new CLI commands for labeling and benchmark metrics.
+- `2026-02-14 17:54:39 -06:00`:
+  - Implemented benchmark tooling:
+    - `src/soyscope/db.py`: added `finding_labels` schema/indexes and label CRUD/query methods.
+    - `src/soyscope/evaluation.py`: added novelty normalization + precision/recall/F1 evaluator.
+    - `src/soyscope/cli.py`: added `soyscope label`, `soyscope labels`, `soyscope benchmark`.
+    - `tests/test_db.py` and new `tests/test_evaluation.py` for coverage.
+  - Validation:
+    - `python -m pytest tests/test_db.py tests/test_evaluation.py -q` -> `23 passed`
+    - `python -m pytest -q` -> `249 passed`
+  - Status: changes are in working tree and not committed yet.
