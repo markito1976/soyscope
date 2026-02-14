@@ -129,7 +129,7 @@ class TestGenerateAcademicQueries:
         assert has_soy_bean, "Missing 'soy bean' synonym variant"
 
     def test_query_count_with_keywords(self):
-        # Adhesives has 5 keywords: 2 keyword-pair queries + 3 synonym-expanded = 5
+        # Adhesives has 19 keywords: 2 keyword-pair queries + 3 synonym-expanded = 5
         result = generate_academic_queries("Soy Oil", "Adhesives & Sealants")
         assert len(result) == 5
 

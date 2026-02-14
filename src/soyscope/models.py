@@ -186,6 +186,21 @@ class USBDeliverable(BaseModel):
     raw_csv_row: dict[str, Any] = Field(default_factory=dict)
 
 
+class KnownApplication(BaseModel):
+    """A known commercial soy-based product from the soy-uses.md reference."""
+    id: int | None = None
+    product_name: str | None = None
+    manufacturer: str | None = None
+    sector: str
+    derivative: str | None = None
+    category: str
+    market_size: str | None = None
+    description: str | None = None
+    year_introduced: int | None = None
+    is_commercialized: bool = True
+    source_doc: str = "soy-uses.md"
+
+
 class EnrichmentRequest(BaseModel):
     """Request to enrich a batch of findings."""
     findings: list[Finding]

@@ -14,6 +14,7 @@ from .models import (
     Derivative,
     Enrichment,
     Finding,
+    KnownApplication,
     Paper,
     SearchQuery,
     SearchRun,
@@ -200,6 +201,24 @@ CREATE INDEX IF NOT EXISTS idx_findings_title ON findings(title);
 CREATE INDEX IF NOT EXISTS idx_enrichments_finding_id ON enrichments(finding_id);
 CREATE INDEX IF NOT EXISTS idx_enrichments_novelty ON enrichments(novelty_score);
 CREATE INDEX IF NOT EXISTS idx_search_queries_run_id ON search_queries(run_id);
+
+CREATE TABLE IF NOT EXISTS known_applications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_name TEXT,
+    manufacturer TEXT,
+    sector TEXT NOT NULL,
+    derivative TEXT,
+    category TEXT NOT NULL,
+    market_size TEXT,
+    description TEXT,
+    year_introduced INTEGER,
+    is_commercialized BOOLEAN DEFAULT 1,
+    source_doc TEXT DEFAULT 'soy-uses.md'
+);
+
+CREATE INDEX IF NOT EXISTS idx_known_apps_sector ON known_applications(sector);
+CREATE INDEX IF NOT EXISTS idx_known_apps_derivative ON known_applications(derivative);
+CREATE INDEX IF NOT EXISTS idx_known_apps_product ON known_applications(product_name);
 """
 
 
@@ -967,3 +986,83 @@ class Database:
                    completed_at = CURRENT_TIMESTAMP WHERE id = ?""",
                 (run_id,),
             )
+
+    # ── Known Applications ──
+
+    def insert_known_application(self, app: KnownApplication) -> int:
+        """Insert a known application entry."""
+        with self.connect() as conn:
+            try:
+                cur = conn.execute(
+                    """INSERT INTO known_applications
+                       (product_name, manufacturer, sector, derivative, category,
+                        market_size, description, year_introduced, is_commercialized, source_doc)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        app.product_name,
+                        app.manufacturer,
+                        app.sector,
+                        app.derivative,
+                        app.category,
+                        app.market_size,
+                        app.description,
+                        app.year_introduced,
+                        int(app.is_commercialized),
+                        app.source_doc,
+                    ),
+                )
+                return cur.lastrowid
+            except sqlite3.IntegrityError:
+                return -1
+
+    def get_all_known_applications(self) -> list[dict[str, Any]]:
+        """Return all known application entries."""
+        with self.connect() as conn:
+            return [dict(r) for r in conn.execute(
+                "SELECT * FROM known_applications ORDER BY sector, category"
+            ).fetchall()]
+
+    def get_known_applications_by_sector(self, sector: str) -> list[dict[str, Any]]:
+        """Return known applications for a given sector."""
+        with self.connect() as conn:
+            return [dict(r) for r in conn.execute(
+                "SELECT * FROM known_applications WHERE sector = ? ORDER BY category",
+                (sector,),
+            ).fetchall()]
+
+    def get_known_applications_count(self) -> int:
+        """Return total count of known applications."""
+        with self.connect() as conn:
+            return conn.execute("SELECT COUNT(*) FROM known_applications").fetchone()[0]
+
+    def seed_known_applications(self, apps: list[KnownApplication]) -> int:
+        """Seed known applications table from a list, skipping existing entries.
+
+        Returns number inserted.
+        """
+        inserted = 0
+        with self.connect() as conn:
+            for app in apps:
+                try:
+                    conn.execute(
+                        """INSERT INTO known_applications
+                           (product_name, manufacturer, sector, derivative, category,
+                            market_size, description, year_introduced, is_commercialized, source_doc)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            app.product_name,
+                            app.manufacturer,
+                            app.sector,
+                            app.derivative,
+                            app.category,
+                            app.market_size,
+                            app.description,
+                            app.year_introduced,
+                            int(app.is_commercialized),
+                            app.source_doc,
+                        ),
+                    )
+                    inserted += 1
+                except sqlite3.IntegrityError:
+                    pass
+        return inserted

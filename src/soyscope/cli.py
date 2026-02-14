@@ -148,6 +148,13 @@ def _seed_taxonomy(db: Database) -> None:
         db.insert_derivative(name)
 
 
+def _seed_known_applications(db: Database) -> int:
+    """Seed the known_applications table from the reference inventory."""
+    from .known_apps_seed import KNOWN_APPLICATIONS
+
+    return db.seed_known_applications(KNOWN_APPLICATIONS)
+
+
 @app.command()
 def build(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
@@ -462,14 +469,16 @@ def gui():
 def init_db(
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ):
-    """Initialize database and seed taxonomy."""
+    """Initialize database and seed taxonomy + known applications."""
     _setup_logging(verbose)
     db = _get_db()
     _seed_taxonomy(db)
+    ka_count = _seed_known_applications(db)
     console.print("[green]Database initialized and taxonomy seeded.[/green]")
     stats_cmd = db.get_stats()
     console.print(f"  Sectors: {stats_cmd['total_sectors']}")
     console.print(f"  Derivatives: {stats_cmd['total_derivatives']}")
+    console.print(f"  Known Applications: {db.get_known_applications_count()} ({ka_count} new)")
 
 
 if __name__ == "__main__":

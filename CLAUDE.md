@@ -67,13 +67,28 @@ The Run History tab includes a transparent Build Dashboard with:
 
 ## Database
 SQLite at `data/soyscope.db`. Schema in `src/soyscope/db.py`.
-Key tables: findings, finding_sources, search_checkpoints, enrichments, sectors, derivatives, tags.
+Key tables: findings, finding_sources, search_checkpoints, enrichments, sectors, derivatives, tags, known_applications.
 - **WARNING:** enrichments table contains 300 dummy records from `seed_dummy_data.py` — must be purged before real enrichment
 
+## Taxonomy (19 × 19 Matrix)
+- **19 sectors** (16 original + Pharmaceuticals & Medical, Candles & Home Products, Paper & Printing)
+- **19 derivatives** (14 original - 1 duplicate + 6 new: Methyl Soyate, Epoxidized Soybean Oil, Phytosterols, Azelaic Acid, Dimer Fatty Acids, Soy Molasses)
+- "Soybean Hulls" consolidated into "Soy Hulls" (subtypes merged)
+- SECTOR_KEYWORDS: 15-25 keywords per sector for targeted academic queries
+- Full taxonomy in `data/taxonomy.json`
+
+## Known Applications & Novelty Detection
+- `known_applications` table: 152 entries of known commercial soy products from `docs/soy-uses.md`
+- Seed data in `src/soyscope/known_apps_seed.py`
+- Novelty scoring in `src/soyscope/novelty.py`: 0 = known product, 100 = novel discovery
+- `soyscope init` seeds taxonomy + known applications automatically
+- Reference document: `docs/soy-uses.md` (17 chapters, 200+ applications)
+
 ## Search Strategy (EVOLVING)
-Current: grid search (14 derivatives × 16 sectors × 5 time windows) with synonym expansion.
+Current: grid search (19 derivatives × 19 sectors × 5 time windows) = ~19,975 queries with synonym expansion.
 Next: **open-ended discovery queries** to find novel soy uses OUTSIDE the known matrix.
 The most valuable findings are the ones that DON'T fit existing categories.
+Novelty detection compares findings against known_applications to prioritize truly novel discoveries.
 
 ## Testing
-Run: `pytest tests/` — **200 tests passing** (as of Feb 13 2026)
+Run: `pytest tests/` — **243 tests passing** (as of Feb 14 2026)

@@ -7,13 +7,18 @@
     "Soy Fiber",
     "Soy Wax",
     "Soy Hulls",
-    "Soybean Hulls",
     "Soy-based Polyols",
     "Soy Isoflavones",
     "Soy Fatty Acids",
     "Glycerol soy-derived",
     "Soy-based Resins",
-    "Whole Soybean"
+    "Whole Soybean",
+    "Methyl Soyate",
+    "Epoxidized Soybean Oil",
+    "Phytosterols",
+    "Azelaic Acid",
+    "Dimer Fatty Acids",
+    "Soy Molasses"
   ],
   "derivative_details": {
     "Soy Oil": {
@@ -41,12 +46,8 @@
       "description": "Hydrogenated soy oil used in candles, coatings, and packaging."
     },
     "Soy Hulls": {
-      "subtypes": ["raw", "processed"],
+      "subtypes": ["raw", "processed", "lignocellulosic", "straw"],
       "description": "Outer coating of soybeans, used in composites and as fermentation feedstock."
-    },
-    "Soybean Hulls": {
-      "subtypes": ["lignocellulosic", "straw"],
-      "description": "Lignocellulosic biomass for bioenergy and bio-based materials."
     },
     "Soy-based Polyols": {
       "subtypes": ["polyester polyol", "polyether polyol"],
@@ -71,6 +72,30 @@
     "Whole Soybean": {
       "subtypes": ["fermented", "processed", "roasted"],
       "description": "Whole bean applications in industrial fermentation and direct processing."
+    },
+    "Methyl Soyate": {
+      "subtypes": ["solvent-grade", "adjuvant-grade"],
+      "description": "Soy oil methyl ester used as industrial solvent, agricultural adjuvant, and cleaning agent."
+    },
+    "Epoxidized Soybean Oil": {
+      "subtypes": ["plasticizer", "stabilizer", "coating resin"],
+      "description": "Epoxidized soy oil used as PVC plasticizer, heat stabilizer, and coating intermediate."
+    },
+    "Phytosterols": {
+      "subtypes": ["stigmasterol", "sitosterol", "campesterol"],
+      "description": "Plant sterols from soy oil refining used as steroid drug precursors and nutraceuticals."
+    },
+    "Azelaic Acid": {
+      "subtypes": ["industrial", "cosmetic"],
+      "description": "C9 dicarboxylic acid from soy oil ozonolysis used in polymers, lubricants, and cosmetics."
+    },
+    "Dimer Fatty Acids": {
+      "subtypes": ["monomer", "dimer", "trimer"],
+      "description": "Dimerized soy fatty acids for hot-melt adhesives, polyamide resins, and corrosion inhibitors."
+    },
+    "Soy Molasses": {
+      "subtypes": ["crude", "clarified"],
+      "description": "Byproduct of soy protein concentrate production used as fermentation substrate."
     }
   },
   "sectors": [
@@ -89,7 +114,10 @@
     "Agriculture",
     "Electronics",
     "Firefighting Foam",
-    "Rubber & Elastomers"
+    "Rubber & Elastomers",
+    "Pharmaceuticals & Medical",
+    "Candles & Home Products",
+    "Paper & Printing"
   ],
   "sector_details": {
     "Construction & Building Materials": {
@@ -155,6 +183,18 @@
     "Rubber & Elastomers": {
       "keywords": ["rubber", "elastomer", "tire compound", "vulcanization", "bio-rubber", "natural rubber"],
       "description": "Soy oil in rubber compounding and elastomer production."
+    },
+    "Pharmaceuticals & Medical": {
+      "keywords": ["parenteral nutrition", "IV emulsion", "liposome", "drug delivery", "phytosterol", "steroid synthesis", "excipient", "Intralipid", "phospholipid", "nanoparticle drug", "lipid nanoparticle", "soy lecithin injection", "nutraceutical", "dietary supplement", "hormone precursor"],
+      "description": "Soy-derived ingredients in pharmaceutical formulations, drug delivery systems, and medical nutrition."
+    },
+    "Candles & Home Products": {
+      "keywords": ["candle", "soy wax candle", "wax melt", "home fragrance", "NatureWax", "container candle", "pillar candle", "wax coating", "candle wax", "scented candle", "votive", "tealight", "aromatherapy"],
+      "description": "Soy wax candles, wax melts, and home fragrance products."
+    },
+    "Paper & Printing": {
+      "keywords": ["paper coating", "printing ink", "soy ink", "SoySeal", "wet-strength", "barrier coating", "de-inking", "corrugated board", "paper binder", "sizing agent", "paper laminate", "newsprint ink"],
+      "description": "Soy-based printing inks, paper coatings, and paper processing agents."
     }
   }
 }
