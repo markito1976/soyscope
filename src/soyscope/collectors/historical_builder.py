@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 from rich.console import Console
@@ -50,6 +51,7 @@ class HistoricalBuilder:
         concurrency: int = 3,
         max_queries: int | None = None,
         resume: bool = False,
+        progress_callback: Callable[[dict], None] | None = None,
     ) -> dict[str, Any]:
         """Execute the full historical build.
 
@@ -57,6 +59,8 @@ class HistoricalBuilder:
             concurrency: Number of concurrent API queries.
             max_queries: Limit total queries (for testing).
             resume: If True, resume the last interrupted build run.
+            progress_callback: Optional callback invoked with a dict of
+                progress data after each query and at build start/end.
 
         Returns:
             Summary statistics.
@@ -129,6 +133,18 @@ class HistoricalBuilder:
         errors = 0
         start_time = time.time()
 
+        # Emit build_started event
+        if progress_callback:
+            source_names = list({api for p in plans for api in p.target_apis})
+            progress_callback({
+                "event": "build_started",
+                "total_queries": len(pending),
+                "sources": source_names,
+                "concurrency": concurrency,
+                "resumed": resume,
+                "run_id": run_id,
+            })
+
         semaphore = asyncio.Semaphore(concurrency)
 
         async def execute_query(cp: dict[str, Any]) -> tuple[int, int, int]:
@@ -153,10 +169,44 @@ class HistoricalBuilder:
                         source_names=plan.target_apis,
                     )
                     self.db.complete_checkpoint(cp_id, new, updated)
+
+                    # Nonlocal counters are updated by the caller after
+                    # gather(), so we pass the running totals via the
+                    # callback *after* the caller updates them.  Instead
+                    # we report per-query results here and let the caller
+                    # aggregate.
+                    if progress_callback:
+                        progress_callback({
+                            "event": "query_complete",
+                            "completed": total_queries + 1,
+                            "total": len(pending),
+                            "query": plan.query,
+                            "query_type": plan.query_type,
+                            "derivative": plan.derivative,
+                            "sector": plan.sector,
+                            "new_findings": new,
+                            "updated_findings": updated,
+                            "total_new": total_new + new,
+                            "total_updated": total_updated + updated,
+                            "errors": errors,
+                            "elapsed_seconds": time.time() - start_time,
+                        })
+
                     return new, updated, cp_id
                 except Exception as e:
                     logger.error(f"Query failed (cp #{cp_id}): {plan.query}: {e}")
                     self.db.fail_checkpoint(cp_id)
+
+                    if progress_callback:
+                        progress_callback({
+                            "event": "source_error",
+                            "source": ", ".join(plan.target_apis),
+                            "query": plan.query,
+                            "error": str(e),
+                            "errors": errors + 1,
+                            "elapsed_seconds": time.time() - start_time,
+                        })
+
                     return 0, 0, cp_id
 
         # Execute with progress bar
@@ -246,5 +296,11 @@ class HistoricalBuilder:
         console.print(f"  Updated findings: {total_updated}")
         console.print(f"  Errors: {errors}")
         console.print(f"  Time: {elapsed:.1f}s")
+
+        if progress_callback:
+            progress_callback({
+                "event": "build_complete",
+                **summary,
+            })
 
         return summary

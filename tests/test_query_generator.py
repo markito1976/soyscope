@@ -116,26 +116,27 @@ class TestGenerateAcademicQueries:
         assert isinstance(result, list)
         assert all(isinstance(q, str) for q in result)
 
-    def test_includes_direct_derivative_query(self):
+    def test_includes_derivative_with_keywords(self):
         result = generate_academic_queries("Soy Oil", "Adhesives & Sealants")
-        assert any("Soy Oil" in q and "Adhesives & Sealants" in q for q in result)
+        # Should have derivative paired with sector keywords, not sector name
+        assert any("Soy Oil" in q and "adhesive" in q for q in result)
 
     def test_includes_synonym_expansion(self):
         result = generate_academic_queries("Soy Oil", "Adhesives & Sealants")
         has_soybean = any("soybean" in q.lower() for q in result)
-        has_soja = any("soja" in q.lower() for q in result)
+        has_soy_bean = any("soy bean" in q.lower() for q in result)
         assert has_soybean, "Missing soybean synonym variant"
-        assert has_soja, "Missing soja synonym variant"
+        assert has_soy_bean, "Missing 'soy bean' synonym variant"
 
     def test_query_count_with_keywords(self):
-        # Adhesives has keywords, so: 2 direct + 10 expanded = 12
+        # Adhesives has 5 keywords: 2 keyword-pair queries + 3 synonym-expanded = 5
         result = generate_academic_queries("Soy Oil", "Adhesives & Sealants")
-        assert len(result) == 12
+        assert len(result) == 5
 
     def test_query_count_without_keywords(self):
-        # Unknown sector has no keywords: 1 direct + 10 expanded = 11
+        # Unknown sector: 1 fallback keyword-pair + 3 synonym-expanded = 4
         result = generate_academic_queries("Soy Oil", "Unknown Sector")
-        assert len(result) == 11
+        assert len(result) == 4
 
     def test_includes_keyword_query(self):
         result = generate_academic_queries("Soy Oil", "Adhesives & Sealants")
@@ -178,13 +179,13 @@ class TestGenerateWebQueries:
 class TestGeneratePatentQueries:
     def test_returns_queries(self):
         result = generate_patent_queries("Soy Oil", "Construction & Building Materials")
-        assert len(result) == 5  # 1 template x 5 synonyms
+        assert len(result) == 3  # 3 derivative synonyms (Soy Oil, Soybean Oil, Soy Bean Oil)
 
-    def test_full_synonym_expansion(self):
+    def test_derivative_synonym_expansion(self):
         result = generate_patent_queries("Soy Oil", "Construction & Building Materials")
-        assert any("soja" in q for q in result)
-        assert any("soya" in q for q in result)
-        assert any("soy bean" in q for q in result)
+        assert any("soybean oil" in q for q in result)
+        assert any("soy bean oil" in q for q in result)
+        assert any("adhesive" in q for q in result)  # uses sector keyword
 
 
 class TestGenerateGovtQueries:

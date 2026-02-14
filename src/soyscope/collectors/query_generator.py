@@ -201,85 +201,91 @@ def load_taxonomy(taxonomy_path: Path | None = None) -> tuple[list[str], list[st
 def generate_academic_queries(derivative: str, sector: str) -> list[str]:
     """Generate academic search queries for a derivative-sector pair.
 
-    Uses synonym expansion so each base template produces one query per
-    synonym in :data:`SOY_SYNONYMS`.
+    Every query forces soy relevance by including the derivative name
+    (which contains a soy term) paired with sector **keywords** rather
+    than full sector names (which can match journal titles in Crossref).
     """
-    sector_short = sector.split(" & ")[0].split(",")[0].lower()
     keywords = SECTOR_KEYWORDS.get(sector, [])
+    if not keywords:
+        # Fallback: use first word of sector as keyword
+        keywords = [sector.split(" & ")[0].split(",")[0].lower()]
 
-    # Base templates using {soy} placeholder for expansion
-    templates: list[str] = [
-        f'"{{soy}}-based" AND "{sector}"',
-        f'"{{soy}}" AND "{sector_short}"',
-    ]
-    # Derivative-specific query (already contains the soy word via derivative name)
-    direct_queries: list[str] = [
-        f'"{derivative}" AND "{sector}"',
-    ]
-    if keywords:
-        kw_part = f'"{keywords[0]}" OR "{keywords[1] if len(keywords) > 1 else keywords[0]}"'
-        direct_queries.append(f'"{derivative}" AND ({kw_part})')
+    queries: list[str] = []
 
-    # Expand synonym templates
-    expanded: list[str] = []
-    for tmpl in templates:
-        expanded.extend(expand_soy_synonyms(tmpl))
+    # Query 1: derivative + first 2 keywords (most targeted)
+    kw_pair = " OR ".join(f'"{k}"' for k in keywords[:2])
+    queries.append(f'"{derivative}" AND ({kw_pair})')
 
-    return direct_queries + expanded
+    # Query 2: derivative + next 2 keywords (broader coverage)
+    if len(keywords) > 2:
+        kw_pair2 = " OR ".join(f'"{k}"' for k in keywords[2:4])
+        queries.append(f'"{derivative}" AND ({kw_pair2})')
+
+    # Query 3: synonym expansion with keywords (catches soy/soybean/soja variants)
+    kw_first = keywords[0]
+    for syn in SOY_SYNONYMS[:3]:  # soy, soybean, soy bean
+        queries.append(f'"{syn}" AND "{derivative.split()[-1].lower()}" AND "{kw_first}"')
+
+    return queries
 
 
 def generate_semantic_queries(derivative: str, sector: str) -> list[str]:
     """Generate EXA-style semantic/conceptual queries."""
-    sector_short = sector.split(" & ")[0].split(",")[0]
-    templates = [
-        f"{{soy}} {derivative.lower()} used as alternative in {sector_short.lower()}",
-        f"bio-based {sector_short.lower()} product from {{soy}} replacing petroleum",
-    ]
-    expanded: list[str] = []
-    for tmpl in templates:
-        for syn in SOY_SYNONYMS[:2]:
-            expanded.append(tmpl.replace("{soy}", syn))
-    return expanded
+    keywords = SECTOR_KEYWORDS.get(sector, [])
+    kw = keywords[0] if keywords else sector.split(" & ")[0].split(",")[0].lower()
+    queries: list[str] = []
+    for syn in SOY_SYNONYMS[:2]:
+        queries.append(f"{syn} {derivative.lower()} used as alternative {kw}")
+        queries.append(f"bio-based {kw} product from {syn} replacing petroleum")
+    return queries
 
 
 def generate_web_queries(derivative: str, sector: str) -> list[str]:
     """Generate web/industry search queries for Tavily."""
-    sector_short = sector.split(" & ")[0].split(",")[0]
-    templates = [
-        f"{{soy}}-based {sector_short.lower()} product commercial market",
-        f"{{soy}} {derivative.lower()} industrial application report",
-    ]
-    expanded: list[str] = []
-    for tmpl in templates:
-        for syn in SOY_SYNONYMS[:2]:
-            expanded.append(tmpl.replace("{soy}", syn))
-    return expanded
+    keywords = SECTOR_KEYWORDS.get(sector, [])
+    kw = keywords[0] if keywords else sector.split(" & ")[0].split(",")[0].lower()
+    queries: list[str] = []
+    for syn in SOY_SYNONYMS[:2]:
+        queries.append(f"{syn}-based {kw} product commercial market")
+        queries.append(f"{syn} {derivative.lower()} industrial application report")
+    return queries
+
+
+def _derivative_synonyms(derivative: str) -> list[str]:
+    """Generate synonym variants of a derivative name.
+
+    E.g. "Soy Oil" -> ["Soy Oil", "Soybean Oil", "Soy Bean Oil"]
+    """
+    variants = [derivative]
+    lower = derivative.lower()
+    if lower.startswith("soy "):
+        variants.append("Soybean " + derivative[4:])
+        variants.append("Soy Bean " + derivative[4:])
+    elif lower.startswith("soy-"):
+        variants.append("Soybean-" + derivative[4:])
+        variants.append("Soy Bean-" + derivative[4:])
+    return variants
 
 
 def generate_patent_queries(derivative: str, sector: str) -> list[str]:
     """Generate patent-focused queries for PatentsView and Lens."""
-    sector_short = sector.split(" & ")[0].split(",")[0]
-    templates = [
-        f"{{soy}} {derivative.lower()} {sector_short.lower()}",
-    ]
-    expanded: list[str] = []
-    for tmpl in templates:
-        expanded.extend(expand_soy_synonyms(tmpl))
-    return expanded
+    keywords = SECTOR_KEYWORDS.get(sector, [])
+    kw = keywords[0] if keywords else sector.split(" & ")[0].split(",")[0].lower()
+    queries: list[str] = []
+    for dv in _derivative_synonyms(derivative):
+        queries.append(f"{dv.lower()} {kw}")
+    return queries
 
 
 def generate_govt_queries(derivative: str, sector: str) -> list[str]:
     """Generate government report / grant queries for OSTI, SBIR, USDA ERS."""
-    sector_short = sector.split(" & ")[0].split(",")[0]
-    templates = [
-        f"{{soy}} {derivative.lower()} {sector_short.lower()} research",
-        f"{{soy}} {sector_short.lower()} biobased",
-    ]
-    expanded: list[str] = []
-    for tmpl in templates:
-        for syn in SOY_SYNONYMS[:2]:
-            expanded.append(tmpl.replace("{soy}", syn))
-    return expanded
+    keywords = SECTOR_KEYWORDS.get(sector, [])
+    kw = keywords[0] if keywords else sector.split(" & ")[0].split(",")[0].lower()
+    queries: list[str] = []
+    for syn in SOY_SYNONYMS[:2]:  # soy, soybean
+        queries.append(f"{syn} {derivative.split()[-1].lower()} {kw} research")
+        queries.append(f"{syn} {kw} biobased")
+    return queries
 
 
 # ---------------------------------------------------------------------------

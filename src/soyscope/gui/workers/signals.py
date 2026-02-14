@@ -13,6 +13,9 @@ class WorkerSignals(QObject):
         result: Emitted with the return value of execute() on success.
         progress: Emitted with (current, total, message) for progress tracking.
         log: Emitted with a human-readable log message.
+        build_progress: Emitted with a dict of detailed build metrics
+            (query counts, per-source stats, new findings, etc.) for the
+            Build Dashboard.
     """
 
     started = Signal()
@@ -21,3 +24,4 @@ class WorkerSignals(QObject):
     result = Signal(object)
     progress = Signal(int, int, str)  # current, total, message
     log = Signal(str)
+    build_progress = Signal(dict)  # detailed build dashboard data

@@ -85,10 +85,35 @@ class HistoricalBuildWorker(BaseWorker):
         )
         self.emit_progress(0, 1, "Running historical build (async)...")
 
+        # Rich progress callback: forward data dicts to the GUI via
+        # the build_progress signal.  Qt signals are thread-safe, and
+        # asyncio.run() blocks this worker thread, so direct emission
+        # from the async context is safe.
+        def _on_build_progress(data: dict) -> None:
+            self.signals.build_progress.emit(data)
+            # Also update the simpler progress signal for progress bars
+            if data.get("event") == "query_complete":
+                completed = data.get("completed", 0)
+                total = data.get("total", 1)
+                msg = (
+                    f"Query {completed}/{total}: "
+                    f"+{data.get('new_findings', 0)} new, "
+                    f"+{data.get('updated_findings', 0)} updated"
+                )
+                self.emit_progress(completed, total, msg)
+            elif data.get("event") == "build_started":
+                total = data.get("total_queries", 0)
+                src_count = len(data.get("sources", []))
+                self.emit_log(
+                    f"Build started: {total} queries across {src_count} sources"
+                )
+                self.emit_progress(0, total, "Build started...")
+
         result = asyncio.run(
             builder.build(
                 concurrency=self.concurrency,
                 max_queries=self.max_queries,
+                progress_callback=_on_build_progress,
             )
         )
 
@@ -144,5 +169,30 @@ class HistoricalBuildWorker(BaseWorker):
         if api_cfg["unpaywall"].enabled and api_cfg["unpaywall"].email:
             from soyscope.sources.unpaywall_source import UnpaywallSource
             sources.append(UnpaywallSource(email=api_cfg["unpaywall"].email))
+
+        # --- Tier 1 sources ---
+        if api_cfg["osti"].enabled:
+            from soyscope.sources.osti_source import OSTISource
+            sources.append(OSTISource())
+
+        if api_cfg["patentsview"].enabled:
+            from soyscope.sources.patentsview_source import PatentsViewSource
+            sources.append(PatentsViewSource(api_key=api_cfg["patentsview"].api_key))
+
+        if api_cfg["sbir"].enabled:
+            from soyscope.sources.sbir_source import SBIRSource
+            sources.append(SBIRSource())
+
+        if api_cfg["agris"].enabled:
+            from soyscope.sources.agris_source import AGRISSource
+            sources.append(AGRISSource())
+
+        if api_cfg["lens"].enabled and api_cfg["lens"].api_key:
+            from soyscope.sources.lens_source import LensSource
+            sources.append(LensSource(api_key=api_cfg["lens"].api_key))
+
+        if api_cfg["usda_ers"].enabled:
+            from soyscope.sources.usda_ers_source import USDAERSSource
+            sources.append(USDAERSSource(api_key=api_cfg["usda_ers"].api_key))
 
         return sources
