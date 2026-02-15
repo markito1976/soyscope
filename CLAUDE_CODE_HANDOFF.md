@@ -1,6 +1,6 @@
 # Claude Code Handoff (Audit Fixes)
 
-Last updated: `2026-02-14 17:56:04 -06:00`
+Last updated: `2026-02-14 18:05:16 -06:00`
 
 ## Repository + Branch Data
 
@@ -266,3 +266,11 @@ This file must be updated again at session end with:
 - `2026-02-14 17:56:04 -06:00`:
   - Committed benchmark tooling as `ce377b0`.
   - Current branch has no pending tracked source changes; only local temp artifacts remain untracked.
+- `2026-02-14 18:05:16 -06:00`:
+  - Visual polish pass implemented for GUI theme layer:
+    - `src/soyscope/gui/resources/themes/dark.qss`
+    - `src/soyscope/gui/resources/themes/light.qss`
+    - `src/soyscope/gui/main_window.py` (font refinement to `Segoe UI Variable`)
+  - Launched GUI for live review with:
+    - `python -m soyscope.cli gui` (via `Start-Process`)
+  - Runtime check: active `python` GUI process observed (`Id 28528` at snapshot time).
