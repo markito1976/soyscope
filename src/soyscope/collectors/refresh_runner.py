@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -51,6 +51,7 @@ class RefreshRunner:
         since: str | None = None,
         concurrency: int = 3,
         max_queries: int | None = None,
+        progress_callback: Callable[[dict], None] | None = None,
     ) -> dict[str, Any]:
         """Run incremental refresh.
 
@@ -83,9 +84,20 @@ class RefreshRunner:
         errors = 0
         start_time = time.time()
 
+        if progress_callback:
+            source_names = list({api for p in plans for api in p.target_apis})
+            progress_callback({
+                "event": "build_started",
+                "total_queries": len(plans),
+                "sources": source_names,
+                "concurrency": concurrency,
+                "resumed": False,
+                "run_id": run_id,
+            })
+
         semaphore = asyncio.Semaphore(concurrency)
 
-        async def execute_query(plan):
+        async def execute_query(plan) -> tuple[int, int, bool]:
             async with semaphore:
                 try:
                     new, updated = await self.orchestrator.search_and_store(
@@ -96,10 +108,35 @@ class RefreshRunner:
                         year_end=plan.year_end,
                         source_names=plan.target_apis,
                     )
-                    return new, updated
+                    if progress_callback:
+                        progress_callback({
+                            "event": "query_complete",
+                            "completed": total_queries + 1,
+                            "total": len(plans),
+                            "query": plan.query,
+                            "query_type": plan.query_type,
+                            "derivative": plan.derivative,
+                            "sector": plan.sector,
+                            "new_findings": new,
+                            "updated_findings": updated,
+                            "total_new": total_new + new,
+                            "total_updated": total_updated + updated,
+                            "errors": errors,
+                            "elapsed_seconds": time.time() - start_time,
+                        })
+                    return new, updated, False
                 except Exception as e:
                     logger.error(f"Refresh query failed: {plan.query}: {e}")
-                    return 0, 0
+                    if progress_callback:
+                        progress_callback({
+                            "event": "source_error",
+                            "source": ", ".join(plan.target_apis),
+                            "query": plan.query,
+                            "error": str(e),
+                            "errors": errors + 1,
+                            "elapsed_seconds": time.time() - start_time,
+                        })
+                    return 0, 0, True
 
         with Progress(
             SpinnerColumn(),
@@ -123,9 +160,11 @@ class RefreshRunner:
                     if isinstance(result, Exception):
                         errors += 1
                     else:
-                        new, updated = result
+                        new, updated, failed = result
                         total_new += new
                         total_updated += updated
+                        if failed:
+                            errors += 1
                     progress.update(task, advance=1)
 
         elapsed = time.time() - start_time
@@ -154,5 +193,11 @@ class RefreshRunner:
         console.print(f"  Updated: {total_updated}")
         console.print(f"  Errors: {errors}")
         console.print(f"  Time: {elapsed:.1f}s")
+
+        if progress_callback:
+            progress_callback({
+                "event": "build_complete",
+                **summary,
+            })
 
         return summary

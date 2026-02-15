@@ -1010,10 +1010,9 @@ class RunHistoryTab(QWidget):
         if task_name in self._running_tasks:
             return
 
-        # Refresh uses the same HistoricalBuildWorker with max_queries capped
-        from ..workers.build_worker import HistoricalBuildWorker
+        from ..workers.refresh_worker import RefreshWorker
 
-        worker = HistoricalBuildWorker(self._db_path, concurrency=3, max_queries=20)
+        worker = RefreshWorker(self._db_path, concurrency=3)
 
         # Connect build_progress signal if available
         if hasattr(worker.signals, 'build_progress'):

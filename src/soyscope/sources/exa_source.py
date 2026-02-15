@@ -77,7 +77,7 @@ class ExaSource(BaseSource):
         if year_start is not None:
             search_kwargs["start_published_date"] = f"{year_start}-01-01"
         if year_end is not None:
-            search_kwargs["end_published_date"] = f"{year_end}-01-01"
+            search_kwargs["end_published_date"] = f"{year_end}-12-31"
 
         try:
             response = await asyncio.to_thread(

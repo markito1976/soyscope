@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS finding_derivatives (
 
 CREATE TABLE IF NOT EXISTS enrichments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    finding_id INTEGER UNIQUE REFERENCES findings(id),
+    finding_id INTEGER REFERENCES findings(id),
     tier TEXT NOT NULL,
     trl_estimate INTEGER,
     commercialization_status TEXT,
@@ -194,11 +194,24 @@ CREATE TABLE IF NOT EXISTS search_checkpoints (
 CREATE INDEX IF NOT EXISTS idx_checkpoints_run ON search_checkpoints(run_id);
 CREATE INDEX IF NOT EXISTS idx_checkpoints_status ON search_checkpoints(run_id, status);
 
+CREATE TABLE IF NOT EXISTS finding_labels (
+    finding_id INTEGER PRIMARY KEY REFERENCES findings(id),
+    label TEXT NOT NULL CHECK (label IN ('relevant', 'irrelevant')),
+    label_source TEXT NOT NULL DEFAULT 'manual',
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_finding_labels_label ON finding_labels(label);
+CREATE INDEX IF NOT EXISTS idx_finding_labels_source ON finding_labels(label_source);
+
 CREATE INDEX IF NOT EXISTS idx_findings_doi ON findings(doi);
 CREATE INDEX IF NOT EXISTS idx_findings_year ON findings(year);
 CREATE INDEX IF NOT EXISTS idx_findings_source_api ON findings(source_api);
 CREATE INDEX IF NOT EXISTS idx_findings_title ON findings(title);
 CREATE INDEX IF NOT EXISTS idx_enrichments_finding_id ON enrichments(finding_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_enrichments_finding_tier ON enrichments(finding_id, tier);
 CREATE INDEX IF NOT EXISTS idx_enrichments_novelty ON enrichments(novelty_score);
 CREATE INDEX IF NOT EXISTS idx_search_queries_run_id ON search_queries(run_id);
 
@@ -247,6 +260,54 @@ class Database:
     def init_schema(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA_SQL)
+            self._migrate_enrichments_schema(conn)
+
+    def _migrate_enrichments_schema(self, conn: sqlite3.Connection) -> None:
+        """Migrate enrichments from old per-finding uniqueness to per-tier uniqueness."""
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'enrichments'"
+        ).fetchone()
+        if not row or not row[0]:
+            return
+
+        table_sql = str(row[0]).lower()
+        if "finding_id integer unique" not in table_sql:
+            return
+
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS enrichments_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                finding_id INTEGER REFERENCES findings(id),
+                tier TEXT NOT NULL,
+                trl_estimate INTEGER,
+                commercialization_status TEXT,
+                novelty_score REAL,
+                ai_summary TEXT,
+                key_metrics TEXT,
+                key_players TEXT,
+                soy_advantage TEXT,
+                barriers TEXT,
+                enriched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                model_used TEXT
+            );
+
+            INSERT INTO enrichments_new
+                (id, finding_id, tier, trl_estimate, commercialization_status, novelty_score,
+                 ai_summary, key_metrics, key_players, soy_advantage, barriers, enriched_at, model_used)
+            SELECT
+                id, finding_id, tier, trl_estimate, commercialization_status, novelty_score,
+                ai_summary, key_metrics, key_players, soy_advantage, barriers, enriched_at, model_used
+            FROM enrichments;
+
+            DROP TABLE enrichments;
+            ALTER TABLE enrichments_new RENAME TO enrichments;
+
+            CREATE INDEX IF NOT EXISTS idx_enrichments_finding_id ON enrichments(finding_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_enrichments_finding_tier ON enrichments(finding_id, tier);
+            CREATE INDEX IF NOT EXISTS idx_enrichments_novelty ON enrichments(novelty_score);
+            """
+        )
 
     # ── Findings CRUD ──
 
@@ -511,18 +572,164 @@ class Database:
 
     # ── Enrichments ──
 
-    def insert_enrichment(self, enrichment: Enrichment) -> int:
+    def set_finding_label(
+        self,
+        finding_id: int,
+        label: str,
+        notes: str | None = None,
+        label_source: str = "manual",
+    ) -> None:
+        normalized = label.strip().lower()
+        if normalized not in {"relevant", "irrelevant"}:
+            raise ValueError(f"Invalid label '{label}'. Expected 'relevant' or 'irrelevant'.")
+
         with self.connect() as conn:
-            cur = conn.execute(
-                """INSERT OR REPLACE INTO enrichments
+            exists = conn.execute(
+                "SELECT 1 FROM findings WHERE id = ?",
+                (finding_id,),
+            ).fetchone()
+            if not exists:
+                raise ValueError(f"Finding id {finding_id} does not exist.")
+
+            conn.execute(
+                """INSERT INTO finding_labels (finding_id, label, label_source, notes)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(finding_id) DO UPDATE SET
+                       label = excluded.label,
+                       label_source = excluded.label_source,
+                       notes = excluded.notes,
+                       updated_at = CURRENT_TIMESTAMP""",
+                (finding_id, normalized, label_source, notes),
+            )
+
+    def get_finding_label(self, finding_id: int) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM finding_labels WHERE finding_id = ?",
+                (finding_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_labeled_findings(
+        self,
+        label: str | None = None,
+        limit: int = 0,
+    ) -> list[dict[str, Any]]:
+        params: list[Any] = []
+        query = (
+            """SELECT
+                    fl.finding_id, fl.label, fl.label_source, fl.notes,
+                    fl.created_at, fl.updated_at,
+                    f.title, f.year, f.source_api, f.doi
+               FROM finding_labels fl
+               JOIN findings f ON f.id = fl.finding_id"""
+        )
+
+        if label:
+            normalized = label.strip().lower()
+            if normalized not in {"relevant", "irrelevant"}:
+                raise ValueError(f"Invalid label filter '{label}'.")
+            query += " WHERE fl.label = ?"
+            params.append(normalized)
+
+        query += " ORDER BY fl.updated_at DESC, fl.finding_id DESC"
+        if limit > 0:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        with self.connect() as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_labeled_findings_with_latest_enrichment(
+        self,
+        limit: int = 0,
+    ) -> list[dict[str, Any]]:
+        params: list[Any] = []
+        query = (
+            """SELECT
+                    fl.finding_id,
+                    fl.label,
+                    fl.label_source,
+                    fl.notes,
+                    f.title,
+                    f.year,
+                    f.source_api,
+                    f.source_type,
+                    e.tier AS enrichment_tier,
+                    e.novelty_score,
+                    e.model_used
+               FROM finding_labels fl
+               JOIN findings f ON f.id = fl.finding_id
+               LEFT JOIN enrichments e ON e.id = (
+                   SELECT e2.id
+                   FROM enrichments e2
+                   WHERE e2.finding_id = fl.finding_id
+                   ORDER BY
+                       CASE e2.tier
+                           WHEN 'deep' THEN 3
+                           WHEN 'summary' THEN 2
+                           WHEN 'catalog' THEN 1
+                           ELSE 0
+                       END DESC,
+                       e2.enriched_at DESC,
+                       e2.id DESC
+                   LIMIT 1
+               )
+               ORDER BY fl.updated_at DESC, fl.finding_id DESC"""
+        )
+        if limit > 0:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        with self.connect() as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_label_stats(self) -> dict[str, int]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT label, COUNT(*) AS cnt FROM finding_labels GROUP BY label"
+            ).fetchall()
+
+        stats = {"relevant": 0, "irrelevant": 0, "total_labels": 0}
+        for row in rows:
+            label = str(row[0])
+            cnt = int(row[1])
+            if label in stats:
+                stats[label] = cnt
+            stats["total_labels"] += cnt
+        return stats
+
+    def insert_enrichment(self, enrichment: Enrichment) -> int:
+        tier_value = enrichment.tier.value if hasattr(enrichment.tier, "value") else enrichment.tier
+        status_value = (
+            enrichment.commercialization_status.value
+            if enrichment.commercialization_status and hasattr(enrichment.commercialization_status, "value")
+            else enrichment.commercialization_status
+        )
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO enrichments
                    (finding_id, tier, trl_estimate, commercialization_status, novelty_score,
                     ai_summary, key_metrics, key_players, soy_advantage, barriers, model_used)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(finding_id, tier) DO UPDATE SET
+                       trl_estimate = excluded.trl_estimate,
+                       commercialization_status = excluded.commercialization_status,
+                       novelty_score = excluded.novelty_score,
+                       ai_summary = excluded.ai_summary,
+                       key_metrics = excluded.key_metrics,
+                       key_players = excluded.key_players,
+                       soy_advantage = excluded.soy_advantage,
+                       barriers = excluded.barriers,
+                       model_used = excluded.model_used,
+                       enriched_at = CURRENT_TIMESTAMP""",
                 (
                     enrichment.finding_id,
-                    enrichment.tier.value if hasattr(enrichment.tier, "value") else enrichment.tier,
+                    tier_value,
                     enrichment.trl_estimate,
-                    enrichment.commercialization_status.value if enrichment.commercialization_status and hasattr(enrichment.commercialization_status, "value") else enrichment.commercialization_status,
+                    status_value,
                     enrichment.novelty_score,
                     enrichment.ai_summary,
                     json.dumps(enrichment.key_metrics),
@@ -532,11 +739,29 @@ class Database:
                     enrichment.model_used,
                 ),
             )
-            return cur.lastrowid
+            row = conn.execute(
+                "SELECT id FROM enrichments WHERE finding_id = ? AND tier = ?",
+                (enrichment.finding_id, tier_value),
+            ).fetchone()
+            return row[0] if row else 0
 
     def get_enrichment(self, finding_id: int) -> dict[str, Any] | None:
         with self.connect() as conn:
-            row = conn.execute("SELECT * FROM enrichments WHERE finding_id = ?", (finding_id,)).fetchone()
+            row = conn.execute(
+                """SELECT * FROM enrichments
+                   WHERE finding_id = ?
+                   ORDER BY
+                       CASE tier
+                           WHEN 'deep' THEN 3
+                           WHEN 'summary' THEN 2
+                           WHEN 'catalog' THEN 1
+                           ELSE 0
+                       END DESC,
+                       enriched_at DESC,
+                       id DESC
+                   LIMIT 1""",
+                (finding_id,),
+            ).fetchone()
             return dict(row) if row else None
 
     # ── Search Runs ──
@@ -992,6 +1217,8 @@ class Database:
     def insert_known_application(self, app: KnownApplication) -> int:
         """Insert a known application entry."""
         with self.connect() as conn:
+            if self._known_application_exists(conn, app):
+                return -1
             try:
                 cur = conn.execute(
                     """INSERT INTO known_applications
@@ -1035,6 +1262,29 @@ class Database:
         with self.connect() as conn:
             return conn.execute("SELECT COUNT(*) FROM known_applications").fetchone()[0]
 
+    @staticmethod
+    def _known_application_exists(conn: sqlite3.Connection, app: KnownApplication) -> bool:
+        """Return True if an equivalent known application row already exists."""
+        row = conn.execute(
+            """SELECT 1 FROM known_applications
+               WHERE COALESCE(product_name, '') = COALESCE(?, '')
+                 AND COALESCE(manufacturer, '') = COALESCE(?, '')
+                 AND sector = ?
+                 AND COALESCE(derivative, '') = COALESCE(?, '')
+                 AND category = ?
+                 AND COALESCE(description, '') = COALESCE(?, '')
+               LIMIT 1""",
+            (
+                app.product_name,
+                app.manufacturer,
+                app.sector,
+                app.derivative,
+                app.category,
+                app.description,
+            ),
+        ).fetchone()
+        return row is not None
+
     def seed_known_applications(self, apps: list[KnownApplication]) -> int:
         """Seed known applications table from a list, skipping existing entries.
 
@@ -1043,6 +1293,8 @@ class Database:
         inserted = 0
         with self.connect() as conn:
             for app in apps:
+                if self._known_application_exists(conn, app):
+                    continue
                 try:
                     conn.execute(
                         """INSERT INTO known_applications

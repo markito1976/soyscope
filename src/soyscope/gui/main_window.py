@@ -127,7 +127,7 @@ class SoyScopeMainWindow(QMainWindow):
 
     def _build_tabs(self) -> None:
         self._tabs = QTabWidget()
-        self._tabs.setFont(QFont("Segoe UI", 10))
+        self._tabs.setFont(QFont("Segoe UI Variable", 10))
         self.setCentralWidget(self._tabs)
 
         from .views.overview_tab import OverviewTab
@@ -291,7 +291,7 @@ class SoyScopeMainWindow(QMainWindow):
             "SoyScope — Industrial Soy Research Dashboard\n\n"
             "Builds and maintains a comprehensive database of\n"
             "industrial uses of soy over the past 25 years.\n\n"
-            "8 search APIs + Claude AI enrichment\n"
+            "14 search APIs + Claude AI enrichment\n"
             "SQLite + Excel + Word + PySide6 GUI\n\n"
             "United Soybean Board",
         )
@@ -302,7 +302,7 @@ def launch_gui() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("SoyScope")
     app.setOrganizationName("UnitedSoybeanBoard")
-    app.setFont(QFont("Segoe UI", 10))
+    app.setFont(QFont("Segoe UI Variable", 10))
 
     window = SoyScopeMainWindow()
     window.show()

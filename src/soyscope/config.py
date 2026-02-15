@@ -5,12 +5,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from dotenv import load_dotenv
 
 # Load .env from project root
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 load_dotenv(_PROJECT_ROOT / ".env")
+_CURRENT_YEAR = datetime.now().year
 
 
 @dataclass
@@ -41,9 +43,9 @@ class Settings:
 
     # Search settings
     search_year_start: int = 2000
-    search_year_end: int = 2026
+    search_year_end: int = field(default_factory=lambda: _CURRENT_YEAR)
     time_windows: list[tuple[int, int]] = field(default_factory=lambda: [
-        (2000, 2004), (2005, 2009), (2010, 2014), (2015, 2019), (2020, 2026)
+        (2000, 2004), (2005, 2009), (2010, 2014), (2015, 2019), (2020, _CURRENT_YEAR)
     ])
     max_results_per_query: int = 100
 

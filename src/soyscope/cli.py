@@ -14,6 +14,7 @@ from rich.table import Table
 
 from .config import get_settings
 from .db import Database
+from .evaluation import evaluate_labeled_findings, normalize_novelty_score
 
 app = typer.Typer(
     name="soyscope",
@@ -80,7 +81,7 @@ def _build_sources():
         from .sources.tavily_source import TavilySource
         sources.append(TavilySource(api_key=api_cfg["tavily"].api_key))
 
-    if api_cfg["core"].enabled and api_cfg["core"].api_key:
+    if api_cfg["core"].enabled:
         from .sources.core_source import CoreSource
         sources.append(CoreSource(api_key=api_cfg["core"].api_key))
 
@@ -373,6 +374,134 @@ def stats(
             f"discovered by multiple APIs "
             f"(avg {s['avg_sources_per_finding']:.1f} sources/finding)"
         )
+
+
+@app.command(name="label")
+def label_finding(
+    finding_id: int = typer.Argument(..., help="Finding ID to label"),
+    label_value: str = typer.Option(..., "--label", "-l", help="Label: relevant or irrelevant"),
+    notes: Optional[str] = typer.Option(None, "--notes", "-n", help="Optional notes"),
+    label_source: str = typer.Option("manual", "--source", help="Label source tag"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """Add or update a relevance label for a finding."""
+    _setup_logging(verbose)
+    db = _get_db()
+    try:
+        db.set_finding_label(
+            finding_id=finding_id,
+            label=label_value,
+            notes=notes,
+            label_source=label_source,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    label_row = db.get_finding_label(finding_id)
+    console.print(
+        "[green]Saved label[/green] "
+        f"finding_id={finding_id} label={label_row['label']} source={label_row['label_source']}"
+    )
+
+
+@app.command(name="labels")
+def list_labels(
+    label_filter: Optional[str] = typer.Option(
+        None,
+        "--label",
+        "-l",
+        help="Optional label filter: relevant or irrelevant",
+    ),
+    limit: int = typer.Option(25, "--limit", help="Max labeled findings to show (0 = all)"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """List labeled findings with latest enrichment context."""
+    _setup_logging(verbose)
+    db = _get_db()
+
+    rows = db.get_labeled_findings_with_latest_enrichment(limit=0)
+    if label_filter:
+        normalized = label_filter.strip().lower()
+        if normalized not in {"relevant", "irrelevant"}:
+            console.print("[red]Invalid --label filter. Use relevant|irrelevant.[/red]")
+            raise typer.Exit(1)
+        rows = [row for row in rows if str(row.get("label", "")).lower() == normalized]
+    if limit > 0:
+        rows = rows[:limit]
+
+    if not rows:
+        console.print("[yellow]No labeled findings found.[/yellow]")
+        return
+
+    table = Table(title="Labeled Findings")
+    table.add_column("ID", style="dim")
+    table.add_column("Label", style="cyan")
+    table.add_column("Novelty", style="green")
+    table.add_column("Tier", style="magenta")
+    table.add_column("Source", style="yellow")
+    table.add_column("Title", style="white", max_width=60)
+
+    for row in rows:
+        novelty = normalize_novelty_score(row.get("novelty_score"))
+        novelty_text = f"{novelty:.3f}" if novelty is not None else "-"
+        table.add_row(
+            str(row["finding_id"]),
+            str(row.get("label") or "-"),
+            novelty_text,
+            str(row.get("enrichment_tier") or "-"),
+            str(row.get("source_api") or "-"),
+            str(row.get("title") or "")[:60],
+        )
+    console.print(table)
+
+    stats = db.get_label_stats()
+    console.print(
+        f"Labeled totals: relevant={stats['relevant']}, "
+        f"irrelevant={stats['irrelevant']}, total={stats['total_labels']}"
+    )
+
+
+@app.command(name="benchmark")
+def benchmark(
+    threshold: float = typer.Option(
+        0.7,
+        "--threshold",
+        "-t",
+        min=0.0,
+        max=1.0,
+        help="Novelty threshold used to predict relevance.",
+    ),
+    limit: int = typer.Option(0, "--limit", "-l", help="Max labeled rows to evaluate (0 = all)"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """Evaluate relevance precision/recall against labeled findings."""
+    _setup_logging(verbose)
+    db = _get_db()
+    rows = db.get_labeled_findings_with_latest_enrichment(limit=limit)
+
+    if not rows:
+        console.print("[yellow]No labeled findings found. Add labels with `soyscope label`.[/yellow]")
+        return
+
+    metrics = evaluate_labeled_findings(rows, threshold=threshold)
+
+    table = Table(title=f"Relevance Benchmark (threshold={threshold:.2f})")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green")
+    table.add_row("Total labeled rows", str(metrics["total_rows"]))
+    table.add_row("Evaluated rows", str(metrics["evaluated_rows"]))
+    table.add_row("Rows with novelty", str(metrics["rows_with_novelty"]))
+    table.add_row("Novelty coverage", f"{metrics['novelty_coverage']:.2%}")
+    table.add_row("TP", str(metrics["tp"]))
+    table.add_row("FP", str(metrics["fp"]))
+    table.add_row("FN", str(metrics["fn"]))
+    table.add_row("TN", str(metrics["tn"]))
+    table.add_row("Precision", f"{metrics['precision']:.3f}")
+    table.add_row("Recall", f"{metrics['recall']:.3f}")
+    table.add_row("F1", f"{metrics['f1']:.3f}")
+    table.add_row("Accuracy", f"{metrics['accuracy']:.3f}")
+    console.print(table)
 
 
 @export_app.command(name="excel")
